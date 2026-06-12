@@ -109,8 +109,12 @@ def translate_snippet(text, max_len=200):
     Returns the translation or an error placeholder."""
     if not text or not text.strip():
         return ''
-    # Normalise whitespace for cache key
-    key = text.strip()[:max_len]
+    # Strip zero-width / invisible Unicode control characters (e.g. \u200e LEFT-TO-RIGHT MARK)
+    # that some Wikipedia leads contain as bare formatting artifacts.
+    clean = ''.join(c for c in text if c.isprintable() or c in ' \n')
+    key = clean.strip()[:max_len]
+    if not key:
+        return ''
     if key in _translation_cache:
         return _translation_cache[key]
     try:
