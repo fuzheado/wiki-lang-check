@@ -33,6 +33,40 @@ HEADERS = {
 
 RUN_COUNTER_FILE = os.path.join(SCRIPT_DIR, '.run_counter.json')
 
+# Wikipedia domain map: resolves language codes (yue→zh-yue, nb→no, etc.)
+# Built from the Wikimedia Site Matrix API at runtime with a static fallback.
+_DOMAIN_MAP = {}
+_STATIC_DOMAIN_FALLBACK = {
+    'yue': 'zh-yue.wikipedia.org',
+    'nan': 'zh-min-nan.wikipedia.org',
+    'nb': 'no.wikipedia.org',
+}
+
+
+def _build_domain_map():
+    """Fetch the Wikimedia Site Matrix to build authoritative code→domain mapping."""
+    global _DOMAIN_MAP
+    if _DOMAIN_MAP:
+        return
+    try:
+        resp = requests.get(
+            'https://en.wikipedia.org/w/api.php?action=sitematrix&format=json&smtype=language',
+            headers=HEADERS, timeout=15
+        )
+        data = resp.json()
+        for smkey, smval in data.get('sitematrix', {}).items():
+            if smkey == 'count' or not isinstance(smval, dict):
+                continue
+            lang_code = smval.get('code')
+            for site in smval.get('site', []):
+                if site.get('code') == 'wiki' and 'wikipedia.org' in site.get('url', ''):
+                    domain = site['url'].replace('https://', '').replace('/w/', '')
+                    _DOMAIN_MAP[lang_code] = domain
+    except Exception:
+        pass
+    _DOMAIN_MAP.update(_STATIC_DOMAIN_FALLBACK)
+
+
 # ── Model selection ──
 # Set via set_model() before running the pipeline.
 # Default: LaBSE (109 languages, excellent South Asian coverage).
@@ -388,8 +422,17 @@ def discover_languages(article_title):
     return languages
 
 
+def _domain_for_code(lang):
+    """Return the correct Wikipedia domain for a language code.
+    Uses the Site Matrix if available, otherwise falls back to {code}.wikipedia.org."""
+    if lang in _DOMAIN_MAP:
+        return _DOMAIN_MAP[lang]
+    return f'{lang}.wikipedia.org'
+
+
 def fetch_lead(lang, title):
     """Fetch lead section via REST API /page/summary.
+    Uses Site Matrix to resolve the correct domain for each language code.
     Checks lead cache first. Retries on 429 with exponential backoff + Retry-After.
     """
     import time
@@ -399,8 +442,9 @@ def fetch_lead(lang, title):
         val = _lead_cache[cache_key]
         return val if val else None
 
+    domain = _domain_for_code(lang)
     encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
-    url = f'https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}'
+    url = f'https://{domain}/api/rest_v1/page/summary/{encoded}'
 
     for attempt in range(4):
         try:
@@ -417,7 +461,7 @@ def fetch_lead(lang, title):
                 continue
             if resp.status_code == 414:
                 encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
-                url = f'https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}'
+                url = f'https://{domain}/api/rest_v1/page/summary/{encoded}'
                 resp = requests.get(url, headers=HEADERS, timeout=15)
                 if resp.status_code == 200:
                     extract = resp.json().get('extract', '')
@@ -733,7 +777,9 @@ def run_pipeline(article_title, ideal_sentence, run_number, num_workers=8, do_tr
     print(f'   Found {len(languages)} language editions (including English)', file=sys.stderr)
 
     # ── 2. Fetch ──
-    print(f'⬇️  Fetching leads ({num_workers} concurrent workers)...', file=sys.stderr)
+    # Build domain map from Site Matrix API (resolves yue→zh-yue, nb→no, etc.)
+    _build_domain_map()
+    print(f'⬇️  Fetching leads ({num_workers} concurrent workers, {len(_DOMAIN_MAP)} domains mapped)...', file=sys.stderr)
     print(f'   (lead cache: {len(_lead_cache)} entries)', file=sys.stderr)
     all_results = []
     total_langs = len(languages)
