@@ -30,8 +30,8 @@ Use cases:
 3. **Score** — Encode the ideal sentence and each lead with `distiluse-base-multilingual-cased-v2`, then compute a **dual-metric score**:
    - *Best-sentence match (70% weight)* — maximum cosine similarity between the ideal sentence and any single sentence in the lead
    - *Lead-section match (30% weight)* — cosine similarity between the ideal and the combined first 3 sentences
-4. **Translate** — Each language's best-matching sentence is automatically translated into English via Google Translate (free, no API key) so you can see what the lead actually says
-5. **Report** — Generate a Markdown report with an ASCII histogram, a ranked table with English translations for every language, and detailed top/bottom comparisons
+4. **Translate** *(optional, off by default)* — Each language's best-matching sentence is translated into English via Google Translate. Enable with `--translate`.
+5. **Report** — Generate a Markdown report with an ASCII histogram, a ranked table, and detailed top/bottom comparisons
 
 ## Setup
 
@@ -61,8 +61,10 @@ Both caches are **gitignored** and persist between sessions. Re-running the same
 To force a fresh fetch and re-translate (e.g., after the article has been edited):
 
 ```bash
-python3 wiki_lang_check.py --flushcache --article "Article" --sentence "Ideal sentence."
+python3 wiki_lang_check.py --flushcache --translate --article "Article" --sentence "Ideal sentence."
 ```
+
+> **Note:** Translations are **off by default** to save ~30s per run. Enable them with `--translate` when you need to see what a language's lead actually says in English.
 
 ## Usage
 
@@ -91,6 +93,7 @@ The `example` mode is a quick way to see how the tool works without specifying a
 | `--sentence TEXT` | Yes (or `example`) | Ideal lead sentence to compare against |
 | `--model TEXT` | No | Embedding model: `labse` (default, 109 langs) or `distiluse` (50 langs, faster) |
 | `--workers NUM` | No | Concurrent fetch workers (default: 6). Higher values risk 429 rate limits. |
+| `--translate` | No | Translate lead snippets to English via Google Translate (off by default, ~30s) |
 | `--flushcache` | No | Delete all caches and run fresh (for testing) |
 | `--help` | No | Show detailed usage message |
 | `example` | No (subcommand) | Run the built-in Wikimania example |
@@ -144,11 +147,17 @@ The weighting was chosen empirically: best-sentence gets the majority weight bec
 
 ## Translations
 
-Each language's **best-matching sentence** (the one that scored highest against the ideal) is automatically translated to English using **Google Translate** (via the `deep-translator` library, free, no API key required).
+Each language's **best-matching sentence** (the one that scored highest against the ideal) can be translated to English using **Google Translate** (via the `deep-translator` library, free, no API key required).
 
-Translations appear in the report's ranked table as a `→ English translation` column, and in the detailed top/bottom sections. This lets you see — without knowing the language — whether the lead actually says what you expect.
+Translations are **off by default** because they add ~30s per run. Enable them with the `--translate` flag:
 
-Results are cached, so re-running the same article uses cached translations and skips re-translation.
+```bash
+python3 wiki_lang_check.py --article "Article" --sentence "Ideal sentence." --translate
+```
+
+When enabled, translations appear in the report's ranked table as a `→ English translation` column, and in the detailed top/bottom sections. This lets you see — without knowing the language — whether the lead actually says what you expect.
+
+Results are cached on disk, so re-running the same article with `--translate` skips re-translation.
 
 ### Caveats
 - Translations are of the *single best-matching sentence only*, not the entire lead

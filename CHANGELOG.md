@@ -25,6 +25,7 @@ Tracking implemented features, in-progress work, and planned enhancements.
 | **Lead fetch disk cache** | **2.0** | `.lead_cache.json` stores fetched lead text per `lang:title`. Re-runs skip HTTP entirely. ~100 KB for 300 languages. |
 | **`--flushcache` flag** | **2.0** | Deletes both `.lead_cache.json` and `.translation_cache.json` for a fresh run. |
 | **`--workers` flag** | **2.0** | Configurable concurrency (default: 6). Warning at >8 workers about 429 risk. |
+| **Translations off by default** | **2.0** | `--translate` flag enables Google Translate (~30s). Off by default to keep runs fast. Report shows "Translations: off" banner. |
 
 ---
 
