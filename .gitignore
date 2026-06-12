@@ -1,0 +1,32 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual environment ──
+venv/
+.venv/
+env/
+
+# ── Local state ──
+.run_counter
+
+# ── Run output (generated, article-specific) ──
+*_run*.json
+*_run*.md
+
+# ── macOS ──
+.DS_Store
+Thumbs.db
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── HuggingFace cache (downloaded at runtime) ──
+.cache/

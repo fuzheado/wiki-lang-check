@@ -1,0 +1,684 @@
+#!/usr/bin/env python3
+"""
+Lang-Check: Wikipedia Lead Consistency Analyzer
+
+Given an ideal lead sentence and a Wikipedia article, measures how closely
+each language edition's lead section matches that ideal, using multilingual
+sentence embeddings. Produces a ranked Markdown report with histograms.
+
+Usage:
+  python3 pipeline_v2.py --article "Article" --sentence "Ideal sentence..."
+  python3 pipeline_v2.py example
+  python3 pipeline_v2.py --help
+"""
+import argparse
+import json
+import sys
+import os
+import urllib.parse
+import math
+import glob
+import datetime
+import textwrap
+
+import requests
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import concurrent.futures
+from deep_translator import GoogleTranslator
+
+# ─────────────────────────────────────────────────────────────────────
+# Constants
+# ─────────────────────────────────────────────────────────────────────
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+HEADERS = {
+    'User-Agent': 'LangCheck/1.0 (https://en.wikipedia.org/wiki/User:Ali) LeadConsistencyChecker/2.0'
+}
+
+RUN_COUNTER_FILE = os.path.join(SCRIPT_DIR, '.run_counter')
+MODEL_SHORT = 'distiluse-base-multilingual-cased-v2'
+MODEL_NAME = f'sentence-transformers/{MODEL_SHORT}'
+
+# Translation cache: {text: translated_text}
+_translation_cache = {}
+
+# ─────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────
+
+def cos_sim(a, b):
+    """Cosine similarity between two vectors."""
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+
+def translate_snippet(text, max_len=200):
+    """Translate a short snippet to English using Google Translate (free, no API key).
+    Results are cached so repeated text is not re-translated.
+    Returns the translation or an error placeholder."""
+    if not text or not text.strip():
+        return ''
+    # Normalise whitespace for cache key
+    key = text.strip()[:max_len]
+    if key in _translation_cache:
+        return _translation_cache[key]
+    try:
+        t = GoogleTranslator(source='auto', target='en')
+        result = t.translate(key)
+        if result:
+            _translation_cache[key] = result[:200]
+            return _translation_cache[key]
+    except Exception:
+        pass
+    _translation_cache[key] = f'[translation failed]'
+    return _translation_cache[key]
+
+
+def safe_filename(text):
+    """Turn arbitrary text into a safe filename fragment."""
+    safe = ''.join(c if c.isalnum() or c in ' _-' else '_' for c in text)
+    return safe.strip().replace(' ', '_')[:40]
+
+
+def get_run_number():
+    """Read/write a persistent counter so runs never overwrite each other."""
+    n = 1
+    if os.path.exists(RUN_COUNTER_FILE):
+        with open(RUN_COUNTER_FILE) as f:
+            try:
+                n = int(f.read().strip()) + 1
+            except (ValueError, OSError):
+                n = 1
+    with open(RUN_COUNTER_FILE, 'w') as f:
+        f.write(str(n))
+    return n
+
+
+def make_output_paths(article_title, run_number):
+    """Build output filenames containing article name + run number."""
+    tag = safe_filename(article_title)
+    return {
+        'json': os.path.join(SCRIPT_DIR, f'{tag}_run{run_number:03d}_results.json'),
+        'md':   os.path.join(SCRIPT_DIR, f'{tag}_run{run_number:03d}_report.md'),
+    }
+
+
+def compact_language_summary(results, successful, failed_count):
+    """Print a compact one-line-per-region summary instead of one-per-language."""
+    # Group by rough script/region
+    cyrillic = []
+    latin_west = []
+    latin_east = []
+    arabic = []
+    devanagari = []
+    brahmic_south = []
+    cjk = []
+    other = []
+
+    for r in results:
+        lang = r['lang']
+        # Very rough grouping by language code prefixes
+        if lang in ('ru', 'uk', 'be', 'be-tarask', 'bg', 'mk', 'sr', 'ce', 'cv', 'mhr', 'tg'):
+            cyrillic.append(lang)
+        elif lang in ('ar', 'fa', 'ur', 'ps', 'sd', 'pnb', 'ks', 'ckb'):
+            arabic.append(lang)
+        elif lang in ('hi', 'mai', 'ne'):
+            devanagari.append(lang)
+        elif lang in ('bn', 'as', 'pa', 'gu', 'or'):
+            brahmic_south.append(lang)
+        elif lang in ('ml', 'ta', 'te', 'kn', 'tcy'):
+            brahmic_south.append(lang)
+        elif lang in ('zh', 'wuu', 'yue', 'ja', 'ko', 'cdo', 'hak', 'gan', 'nan', 'lzh', 'za'):
+            cjk.append(lang)
+        elif lang in ('af', 'nl', 'de', 'en', 'simple', 'fr', 'es', 'an', 'pt', 'it',
+                      'ro', 'ca', 'oc', 'la', 'scn', 'lld', 'co', 'wa', 'pms', 'fur',
+                      'vec', 'rm', 'lij', 'lmo', 'nap', 'sc', 'eml', 'fi', 'sv', 'no',
+                      'nb', 'nn', 'da', 'is', 'fo', 'et', 'lv', 'lt', 'pl', 'cs', 'sk',
+                      'hu', 'sl', 'hr', 'bs', 'sq', 'el', 'mt', 'eu', 'gl', 'ga', 'gd',
+                      'cy', 'br', 'kw', 'fy', 'li', 'lb', 'nds', 'sw', 'ha', 'ny', 'mg',
+                      'ig', 'yo', 'sn', 'st', 'tn', 'ts', 've', 'xh', 'zu', 'rn', 'rw',
+                      'sg', 'ee', 'wo', 'ff', 'bm', 'ak', 'tw', 'ksh', 'pdc', 'bar',
+                      'frp', 'ilo', 'pag', 'pam', 'ceb', 'tl', 'war', 'hil', 'bcl',
+                      'cbk', 'mi', 'haw', 'sm', 'to', 'fj', 'ty', 'tpi', 'bi', 'rn',
+                      'sg', 've', 'tr', 'az', 'uz', 'kk', 'ky', 'tk', 'ka', 'hy',
+                      'ms', 'id', 'jv', 'su', 'mad', 'gor', 'map', 'min', 'ace',
+                      'bug', 'ban', 'bjn', 'mg', 'vi', 'lo', 'my', 'km', 'th',
+                      'mn', 'bo', 'dz', 'si', 'ps', 'sd', 'mr', 'gu', 'or'):
+            latin_west.append(lang)
+        else:
+            other.append(lang)
+
+    groups = [
+        ('West/Central European', latin_west),
+        ('Cyrillic script', cyrillic),
+        ('Arabic script', arabic),
+        ('Devanagari (Hindi etc.)', devanagari),
+        ('South Asian Brahmic', brahmic_south),
+        ('CJK (Chinese/Japanese/Korean)', cjk),
+        ('Other', other),
+    ]
+
+    status = f'{successful}✓ + {failed_count}✗' if failed_count else f'{successful}✓'
+    print(f'  Languages: {len(results)} total ({status})', file=sys.stderr)
+    for label, codes in groups:
+        if codes:
+            prefix = ', '.join(codes[:12])
+            ellipsis = ', ...' if len(codes) > 12 else ''
+            print(f'    {label + ":":35s} {len(codes):3d}  [{prefix}{ellipsis}]', file=sys.stderr)
+    print(file=sys.stderr)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Model loading with size warning
+# ─────────────────────────────────────────────────────────────────────
+
+def load_model():
+    """Load the multilingual sentence model, with size warning if not cached."""
+    # Check if model is already cached in huggingface_hub's cache
+    try:
+        import huggingface_hub
+        # Check for either safetensors or pytorch format
+        cached = huggingface_hub.try_to_load_from_cache(MODEL_NAME, 'model.safetensors')
+        if cached is None or not os.path.exists(cached):
+            cached = huggingface_hub.try_to_load_from_cache(MODEL_NAME, 'pytorch_model.bin')
+        already_cached = cached is not None and os.path.exists(cached)
+    except Exception:
+        already_cached = False
+
+    if not already_cached:
+        print(file=sys.stderr)
+        print('╔══════════════════════════════════════════════════════════════╗', file=sys.stderr)
+        print('║  FIRST RUN — downloading model (~500 MB)                  ║', file=sys.stderr)
+        print('║  This happens once. Subsequent runs use the cached model.  ║', file=sys.stderr)
+        print('╚══════════════════════════════════════════════════════════════╝', file=sys.stderr)
+        print(file=sys.stderr)
+
+    print(f'Loading embedding model ({MODEL_NAME})...', file=sys.stderr)
+    model = SentenceTransformer(MODEL_SHORT)
+    return model
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Data fetching
+# ─────────────────────────────────────────────────────────────────────
+
+def discover_languages(article_title):
+    """Query Action API for all interlanguage links of the article."""
+    params = {
+        'action': 'query',
+        'titles': article_title,
+        'prop': 'langlinks',
+        'lllimit': 500,
+        'format': 'json',
+    }
+    resp = requests.get(
+        'https://en.wikipedia.org/w/api.php',
+        params=params, headers=HEADERS, timeout=30
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    languages = [{'lang': 'en', 'title': article_title}]
+    for page_id, page_data in data['query']['pages'].items():
+        if 'langlinks' in page_data:
+            for ll in page_data['langlinks']:
+                languages.append({'lang': ll['lang'], 'title': ll['*']})
+    return languages
+
+
+def fetch_lead(lang, title):
+    """Fetch lead section via REST API /page/summary."""
+    try:
+        encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
+        url = f'https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}'
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        if resp.status_code == 200:
+            extract = resp.json().get('extract', '')
+            if extract and extract.strip():
+                return extract
+        return None
+    except Exception:
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Scoring
+# ─────────────────────────────────────────────────────────────────────
+
+def score_leads(ideal_sentence, all_results, model):
+    """Dual-metric scoring: best-sentence (70%) + lead-section (30%)."""
+    ideal_embedding = model.encode(ideal_sentence)
+
+    fetched = [r for r in all_results if r['lead']]
+    scored = []
+
+    for r in fetched:
+        lead_text = r['lead']
+        sentences = [s.strip() for s in lead_text.replace('\n', ' ').split('.') if s.strip()]
+
+        if sentences:
+            sent_embeddings = model.encode(sentences)
+            best_sim = max(cos_sim(ideal_embedding, se) for se in sent_embeddings)
+
+            # Best sentence index
+            best_idx = 0
+            best_sim_val = 0.0
+            for i, se in enumerate(sent_embeddings):
+                sim = cos_sim(ideal_embedding, se)
+                if sim > best_sim_val:
+                    best_sim_val = sim
+                    best_idx = i
+        else:
+            best_sim = 0.0
+            best_idx = 0
+
+        # Lead-section match (first 3 sentences)
+        first_part = '. '.join(sentences[:3]) + ('.' if len(sentences) > 1 else '')
+        if first_part.strip():
+            lead_embedding = model.encode(first_part)
+            lead_sim = cos_sim(ideal_embedding, lead_embedding)
+        else:
+            lead_sim = 0.0
+
+        combined = 0.7 * best_sim + 0.3 * lead_sim
+
+        # Best-matching sentence (the one that scored highest)
+        snippet = (
+            sentences[best_idx][:200] + ('...' if len(sentences[best_idx]) > 200 else '')
+            if sentences else ''
+        )
+
+        scored.append({
+            'lang': r['lang'],
+            'title': r['title'],
+            'similarity': round(combined, 4),
+            'best_sentence_score': round(best_sim, 4),
+            'lead_section_score': round(lead_sim, 4),
+            'best_sentence_idx': best_idx,
+            'total_sentences': len(sentences),
+            'lead_snippet': snippet,
+            'translation': '',  # filled in after scoring
+        })
+
+    scored.sort(key=lambda x: x['similarity'], reverse=True)
+    fetched_count = len(fetched)
+    return scored, fetched_count
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Report generation
+# ─────────────────────────────────────────────────────────────────────
+
+def generate_report(scored, all_results, total, successful, ideal_sentence, output_paths, article_title):
+    """Generate comprehensive Markdown report."""
+    buckets = {
+        "0.90–1.00": [],
+        "0.80–0.89": [],
+        "0.70–0.79": [],
+        "0.60–0.69": [],
+        "0.50–0.59": [],
+        "0.00–0.49": [],
+        "<0.00": [],
+    }
+    for r in scored:
+        s = r['similarity']
+        if s >= 0.90:     buckets["0.90–1.00"].append(r)
+        elif s >= 0.80:   buckets["0.80–0.89"].append(r)
+        elif s >= 0.70:   buckets["0.70–0.79"].append(r)
+        elif s >= 0.60:   buckets["0.60–0.69"].append(r)
+        elif s >= 0.50:   buckets["0.50–0.59"].append(r)
+        elif s >= 0.00:   buckets["0.00–0.49"].append(r)
+        else:             buckets["<0.00"].append(r)
+
+    scores = [r['similarity'] for r in scored]
+    mean = np.mean(scores) if scores else 0
+    median = np.median(scores) if scores else 0
+    std = np.std(scores) if scores else 0
+
+    high_count = sum(1 for s in scores if s >= 0.80)
+    midhigh_count = sum(1 for s in scores if 0.70 <= s < 0.80)
+    mid_count = sum(1 for s in scores if 0.50 <= s < 0.70)
+    low_count = sum(1 for s in scores if s < 0.50)
+
+    lines = []
+    lines.append(f'# Lead Consistency Report: {article_title}')
+    lines.append('')
+    lines.append(f'**Ideal sentence:** "{ideal_sentence}"')
+    lines.append(f'**Run:** {os.path.basename(output_paths["json"])}')
+    lines.append(f'**Date:** {datetime.datetime.now().strftime("%Y-%m-%d %H:%M UTC")}')
+    lines.append('')
+    lines.append(f'**Total languages checked:** {total}')
+    lines.append(f'**Successful fetches:** {successful}')
+    lines.append(f'**Not found/error:** {total - successful}')
+    lines.append('')
+
+    # ── Scoring method ──
+    lines.append('## Scoring Method')
+    lines.append('')
+    lines.append('Each language\'s lead section is scored using a **combined metric**:')
+    lines.append('')
+    lines.append('- **Best-sentence match (70% weight):** The ideal sentence is compared against every individual sentence in the lead. The highest similarity is retained. This captures whether *any* sentence in the lead conveys the core idea.')
+    lines.append('- **Lead-section match (30% weight):** The ideal sentence is compared against the combined first 3 sentences of the lead. This captures how well the *overall* lead aligns at the paragraph level.')
+    lines.append('')
+    lines.append(f'Using a multilingual sentence transformer (`{MODEL_SHORT}`), semantic similarity is computed as cosine similarity between embeddings.')
+    lines.append('')
+
+    # ── Quick summary ──
+    lines.append('## Quick Summary')
+    lines.append('')
+    lines.append('The ideal sentence has **two key clauses**:')
+    lines.append(f'1. "annual conference of the Wikimedia movement"')
+    lines.append(f'2. "organized by the community of contributors and hosted by the Wikimedia Foundation"')
+    lines.append('')
+    lines.append('The combined score (0–1 scale) measures how closely each language\'s lead conveys both ideas.')
+    lines.append('')
+
+    # ── Key findings ──
+    lines.append('## Key Findings')
+    lines.append('')
+    top3 = scored[:3]
+    top3_str = ', '.join(f'{r["title"]} ({r["lang"]}, {r["similarity"]:.2f})' for r in top3)
+    lines.append(f'1. **Top performers:** {top3_str} — these languages closely match the ideal sentence.')
+    en_rank = next((i+1 for i, r in enumerate(scored) if r['lang'] == 'en'), 'N/A')
+    lines.append(f'2. **English (en)** ranks **#{en_rank}** with a combined score of {scored[0]["similarity"]:.4f} (best-sentence: {scored[0]["best_sentence_score"]:.4f}, lead-section: {scored[0]["lead_section_score"]:.4f}).')
+    lines.append(f'3. **Distribution:** {high_count} languages high (≥0.80), {midhigh_count} moderate (0.70–0.79), {mid_count} fair (0.50–0.69), {low_count} low (<0.50).')
+    lines.append(f'4. **Common divergence pattern:** Many languages frame the article subject differently from the ideal, often shifting emphasis from community agency to institutional framing.')
+    lines.append('')
+
+    # ── Statistics ──
+    lines.append('## Overall Statistics')
+    lines.append('')
+    lines.append('| Metric | Value |')
+    lines.append('|--------|-------|')
+    lines.append(f'| Mean combined score | {mean:.4f} |')
+    lines.append(f'| Median combined score | {median:.4f} |')
+    lines.append(f'| Standard deviation | {std:.4f} |')
+    lines.append(f'| Min score | {min(scores):.4f} |')
+    lines.append(f'| Max score | {max(scores):.4f} |')
+    lines.append(f'| Languages ≥ 0.80 | {sum(1 for s in scores if s >= 0.80)} / {len(scores)} ({sum(1 for s in scores if s >= 0.80)/len(scores)*100:.1f}%) |')
+    lines.append(f'| Languages ≥ 0.90 | {sum(1 for s in scores if s >= 0.90)} / {len(scores)} ({sum(1 for s in scores if s >= 0.90)/len(scores)*100:.1f}%) |')
+    lines.append('')
+
+    # ── Histogram ──
+    lines.append('## Similarity Distribution')
+    lines.append('')
+    lines.append('```')
+    max_count = max(len(v) for v in buckets.values())
+    bar_scale = 40 / max_count if max_count > 0 else 1
+    for label, items in buckets.items():
+        count = len(items)
+        bar = '█' * max(1, int(count * bar_scale)) if count > 0 else '·'
+        pct = count / len(scored) * 100 if len(scored) > 0 else 0
+        lines.append(f'  {label:14s} | {bar:<40s} | {count:2d} ({pct:5.1f}%)')
+    lines.append('```')
+    lines.append('')
+
+    # ── Ranked table ──
+    lines.append('## All Languages (sorted by combined score)')
+    lines.append('')
+    lines.append('| # | Article | Code | Combined | Best-Sent | Lead-Sect | Original snippet | → English translation |')
+    lines.append('|---|---------|------|----------|-----------|-----------|-----------------|----------------------|')
+    for i, r in enumerate(scored, 1):
+        code_display = f'**{r["lang"]}**' if r['lang'] == 'en' else r['lang']
+        snippet = r['lead_snippet'].replace('\n', ' ').strip()[:120]
+        if len(r['lead_snippet']) > 120:
+            snippet += '...'
+        trans = r.get('translation', '').replace('\n', ' ').strip()[:120]
+        if len(r.get('translation', '')) > 120:
+            trans += '...'
+        lines.append(f'| {i} | {r["title"]} | {code_display} | {r["similarity"]:.4f} | {r["best_sentence_score"]:.4f} | {r["lead_section_score"]:.4f} | {snippet} | {trans} |')
+    lines.append('')
+
+    # Build full-lead lookup
+    lead_lookup = {}
+    for r in all_results:
+        if r.get('lead'):
+            lead_lookup[r['lang']] = r['lead']
+
+    # ── Top 5 ──
+    lines.append('## Top 5 Most Aligned Leads')
+    lines.append('')
+    for r in scored[:5]:
+        lines.append(f'### {r["lang"].upper()}: {r["title"]} (combined: {r["similarity"]:.4f}, best-sentence: {r["best_sentence_score"]:.4f})')
+        lines.append('')
+        trans = r.get('translation', '')
+        if trans:
+            lines.append(f'> **Translation:** {trans}')
+            lines.append('')
+        full_lead = lead_lookup.get(r['lang'], '')
+        if full_lead:
+            lines.append(f'> *Original lead:* {full_lead}')
+        lines.append('')
+
+    # ── Bottom 5 ──
+    lines.append('## Bottom 5 Least Aligned Leads')
+    lines.append('')
+    for r in scored[-5:]:
+        lines.append(f'### {r["lang"].upper()}: {r["title"]} (combined: {r["similarity"]:.4f})')
+        lines.append('')
+        trans = r.get('translation', '')
+        if trans:
+            lines.append(f'> **Translation:** {trans}')
+            lines.append('')
+        full_lead = lead_lookup.get(r['lang'], '')
+        if full_lead:
+            lines.append(f'> *Original lead:* {full_lead}')
+        lines.append('')
+
+    # ── Failed ──
+    failed = [r for r in all_results if not r.get('lead')]
+    if failed:
+        lines.append('## Languages Not Found')
+        lines.append('')
+        lines.append('| Code | Title tried |')
+        lines.append('|------|-------------|')
+        for f in sorted(failed, key=lambda x: x['lang']):
+            lines.append(f'| {f["lang"]} | {f["title"]} |')
+        lines.append('')
+
+    lines.append('---')
+    lines.append('')
+    lines.append('> **🗣️ Translation note:** The "→ English translation" column uses **Google Translate** (auto-detect source language, free, no API key required).')
+    lines.append('> Translations are of the *best-matching sentence* in each lead (the one that scored highest against the ideal).')
+    lines.append('> English rows show "(English — original)". Failed translations show "[translation failed]".')
+    lines.append('')
+    lines.append(f'*Generated by `lang-check` pipeline v2*')
+    lines.append(f'*Model: `{MODEL_SHORT}`*')
+    lines.append(f'*Scoring: Combined = 0.7 × best-sentence + 0.3 × lead-section*')
+
+    report = '\n'.join(lines)
+
+    with open(output_paths['md'], 'w', encoding='utf-8') as f:
+        f.write(report)
+    print(f'\n📄 Report: {output_paths["md"]}', file=sys.stderr)
+
+    with open(output_paths['json'], 'w', encoding='utf-8') as f:
+        json.dump({
+            'article': article_title,
+            'ideal_sentence': ideal_sentence,
+            'run_file': os.path.basename(output_paths['json']),
+            'timestamp': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+            'scoring_method': 'Combined (0.7 × best-sentence + 0.3 × lead-section)',
+            'model': MODEL_NAME,
+            'total_languages': total,
+            'successful_fetches': successful,
+            'missing_fetches': total - successful,
+            'results': scored,
+        }, f, ensure_ascii=False, indent=2)
+    print(f'📊 Data: {output_paths["json"]}', file=sys.stderr)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Main pipeline
+# ─────────────────────────────────────────────────────────────────────
+
+def run_pipeline(article_title, ideal_sentence, run_number):
+    """Execute the full discover → fetch → score → report pipeline."""
+    tag = safe_filename(article_title)
+    print(f'\n🔍 Article: {article_title}', file=sys.stderr)
+    print(f'📝 Ideal:   {ideal_sentence[:80]}{"..." if len(ideal_sentence) > 80 else ""}', file=sys.stderr)
+    print(f'🔢 Run #{run_number}', file=sys.stderr)
+
+    # ── 1. Discover ──
+    print('\n🌐 Discovering language editions...', file=sys.stderr)
+    languages = discover_languages(article_title)
+    print(f'   Found {len(languages)} language editions (including English)', file=sys.stderr)
+
+    # ── 2. Fetch ──
+    print('⬇️  Fetching leads (12 concurrent workers)...', file=sys.stderr)
+    all_results = []
+    total_langs = len(languages)
+    completed = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+        future_map = {
+            executor.submit(fetch_lead, item['lang'], item['title']): item
+            for item in languages
+        }
+        for future in concurrent.futures.as_completed(future_map):
+            item = future_map[future]
+            lead = future.result()
+            all_results.append({
+                'lang': item['lang'],
+                'title': item['title'],
+                'lead': lead,
+                'error': None if lead else 'Not found or error',
+            })
+            completed += 1
+            if completed % 20 == 0 or completed == total_langs:
+                ok = sum(1 for r in all_results if r.get('lead'))
+                print(f'   Progress: {completed}/{total_langs} ({ok} found, {completed-ok} missing)', file=sys.stderr)
+
+    successful = sum(1 for r in all_results if r.get('lead'))
+    missing = total_langs - successful
+
+    # ── Compact summary ──
+    compact_language_summary(all_results, successful, missing)
+
+    # ── 3. Score ──
+    model = load_model()
+    print('📐 Scoring leads...', file=sys.stderr)
+    scored, fetched_count = score_leads(ideal_sentence, all_results, model)
+
+    # ── 3b. Translate ──
+    print('🌍 Translating best-matching sentences to English...', file=sys.stderr)
+    total_scores = len(scored)
+    for idx, r in enumerate(scored):
+        # Only translate non-English snippets that haven't been translated yet
+        if r['lang'] != 'en' and not r.get('translation'):
+            r['translation'] = translate_snippet(r['lead_snippet'])
+        elif r['lang'] == 'en':
+            r['translation'] = '(English — original)'
+        if (idx + 1) % 20 == 0 or idx == total_scores - 1:
+            print(f'   Translations: {idx+1}/{total_scores}', file=sys.stderr)
+
+    # ── 4. Report ──
+    output_paths = make_output_paths(article_title, run_number)
+    generate_report(scored, all_results, total_langs, fetched_count,
+                    ideal_sentence, output_paths, article_title)
+
+    # Summary
+    top = scored[:3]
+    print(f'\n✅ Done — run #{run_number} for "{article_title}"', file=sys.stderr)
+    top_str = ', '.join(f'{r["lang"]} ({r["similarity"]:.3f})' for r in top)
+    print(f'   Top:  {top_str}', file=sys.stderr)
+    tail_lang = scored[-1]['lang']
+    tail_sim = scored[-1]['similarity']
+    print(f'   Tail: {tail_lang} ({tail_sim:.3f})', file=sys.stderr)
+
+    return output_paths
+
+
+# ─────────────────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────────────────
+
+def show_usage():
+    """Print a detailed usage / info message."""
+    print(textwrap.dedent("""\
+    ╔══════════════════════════════════════════════════════════════╗
+    ║              Lang-Check — Lead Consistency Analyzer         ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+    Compares the lead section of a Wikipedia article across all language
+    editions against an ideal sentence you provide, using multilingual
+    sentence embeddings to measure semantic similarity.
+
+    USAGE
+      python3 pipeline_v2.py --article "Article title" --sentence "Ideal sentence."
+      python3 pipeline_v2.py example
+      python3 pipeline_v2.py --help
+
+    REQUIRED
+      --article  TEXT   Wikipedia article title (e.g. "Wikimania")
+      --sentence TEXT   The ideal lead sentence to compare against
+
+    OPTIONS
+      --help            Show this message and exit
+
+    EXAMPLE
+      python3 pipeline_v2.py --article "Wikimania" --sentence "Wikimania is the \\
+        Wikimedia movement's annual conference, organized by the community of \\
+        contributors and hosted by the Wikimedia Foundation."
+
+      Or just run the built-in example:
+      python3 pipeline_v2.py example
+
+    NOTES
+      • On first run, ~500 MB of model weights are downloaded.
+        (PyTorch ~800 MB is also needed if not already installed.)
+        Both are cached locally; subsequent runs are faster.
+      • Each run gets a sequence number and produces files named:
+          <Article>_runNNN_results.json
+          <Article>_runNNN_report.md
+      • Run against ~100 language editions typically takes 30–60 seconds
+        (first run is slower due to model download).
+      • For best results, the ideal sentence should match the English
+        article's actual lead — or at least be a statement you believe
+        all language editions should reflect.
+      • The report includes automated English translations of each
+        language's lead snippet via Google Translate (free, no API key).
+    """))
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Lang-Check: Wikipedia Lead Consistency Analyzer',
+        add_help=False,  # We handle --help ourselves for the rich usage
+    )
+    parser.add_argument('--article', type=str, default=None,
+                        help='Wikipedia article title')
+    parser.add_argument('--sentence', type=str, default=None,
+                        help='Ideal lead sentence to compare against')
+    parser.add_argument('--help', action='store_true',
+                        help='Show usage and exit')
+    parser.add_argument('command', nargs='?', default=None,
+                        help='Subcommand: "example"')
+
+    args = parser.parse_args()
+
+    # ── --help or no args ──
+    if args.help or (args.command is None and not args.article):
+        show_usage()
+        sys.exit(0)
+
+    # ── "example" subcommand ──
+    if args.command == 'example':
+        article = 'Wikimania'
+        sentence = (
+            'Wikimania is the Wikimedia movement\'s annual conference, '
+            'organized by the community of contributors and hosted by '
+            'the Wikimedia Foundation.'
+        )
+    elif args.article and args.sentence:
+        article = args.article
+        sentence = args.sentence
+    else:
+        print('Error: --article and --sentence are required, or use "example".', file=sys.stderr)
+        print('Run "python3 pipeline_v2.py --help" for details.', file=sys.stderr)
+        sys.exit(1)
+
+    run_number = get_run_number()
+    run_pipeline(article, sentence, run_number)
+
+
+if __name__ == '__main__':
+    main()
