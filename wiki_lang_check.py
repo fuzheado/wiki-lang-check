@@ -295,18 +295,43 @@ def discover_languages(article_title):
 
 
 def fetch_lead(lang, title):
-    """Fetch lead section via REST API /page/summary."""
-    try:
-        encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
-        url = f'https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}'
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code == 200:
-            extract = resp.json().get('extract', '')
-            if extract and extract.strip():
-                return extract
-        return None
-    except Exception:
-        return None
+    """Fetch lead section via REST API /page/summary.
+    Retries on 429 (rate limit) with exponential backoff + Retry-After.
+    """
+    import time
+    encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
+    url = f'https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}'
+
+    for attempt in range(4):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            if resp.status_code == 200:
+                extract = resp.json().get('extract', '')
+                if extract and extract.strip():
+                    return extract
+                return None  # empty content
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get('Retry-After', 2))
+                wait = retry_after + (2 ** attempt)  # exponential backoff
+                time.sleep(wait)
+                continue
+            if resp.status_code == 414:
+                # URI too long — try with fewer safe chars
+                encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
+                url = f'https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}'
+                resp = requests.get(url, headers=HEADERS, timeout=15)
+                if resp.status_code == 200:
+                    extract = resp.json().get('extract', '')
+                    if extract and extract.strip():
+                        return extract
+                return None
+            return None  # other non-200 (e.g. 404)
+        except requests.Timeout:
+            time.sleep(2 ** attempt)
+            continue
+        except Exception:
+            return None
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -597,11 +622,11 @@ def run_pipeline(article_title, ideal_sentence, run_number):
     print(f'   Found {len(languages)} language editions (including English)', file=sys.stderr)
 
     # ── 2. Fetch ──
-    print('⬇️  Fetching leads (12 concurrent workers)...', file=sys.stderr)
+    print('⬇️  Fetching leads (8 concurrent workers)...', file=sys.stderr)
     all_results = []
     total_langs = len(languages)
     completed = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         future_map = {
             executor.submit(fetch_lead, item['lang'], item['title']): item
             for item in languages

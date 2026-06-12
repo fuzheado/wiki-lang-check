@@ -21,6 +21,7 @@ Tracking implemented features, in-progress work, and planned enhancements.
 | **Machine translation in reports** | **2.0** | Each lead's best-matching sentence auto-translated to English via Google Translate (`deep-translator`, free, no API key). Shown in report table + top/bottom details |
 | **Lazy imports for fast startup** | **2.0** | Heavy libraries (torch, sentence-transformers, numpy) now imported on-demand only. No-args / `--help` startup dropped from ~5s to ~0.13s |
 | **LaBSE as default model** | **2.0** | Default model changed to LaBSE (109 languages, excellent South Asian coverage). Old distilUSE available via `--model distiluse`. South Asian language scores improved from ~-0.02 to ~0.70-0.83 |
+| **Rate-limit handling in fetch** | **2.0** | `fetch_lead()` now retries on 429 with exponential backoff + Retry-After. Also handles 414 (URI too long). Concurrency reduced from 12 to 8 workers. Sun article went from 103/312 → 296/312 found. |
 
 ---
 
