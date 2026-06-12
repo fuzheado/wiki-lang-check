@@ -251,6 +251,10 @@ def compact_language_summary(results, successful, failed_count):
 
     status = f'{successful}✓ + {failed_count}✗' if failed_count else f'{successful}✓'
     print(f'  Languages: {len(results)} total ({status})', file=sys.stderr)
+    if failed_count > 0:
+        failed_langs = [r for r in results if not r.get('lead')]
+        failed_codes = ', '.join(f'{r["lang"]}({r["title"]})' for r in failed_langs)
+        print(f'    Failed: {failed_codes}', file=sys.stderr)
     for label, codes in groups:
         if codes:
             prefix = ', '.join(codes[:12])
@@ -385,8 +389,9 @@ def score_leads(ideal_sentence, all_results, model):
 
     fetched = [r for r in all_results if r['lead']]
     scored = []
+    total = len(fetched)
 
-    for r in fetched:
+    for idx, r in enumerate(fetched):
         lead_text = r['lead']
         sentences = [s.strip() for s in lead_text.replace('\n', ' ').split('.') if s.strip()]
 
@@ -433,6 +438,9 @@ def score_leads(ideal_sentence, all_results, model):
             'lead_snippet': snippet,
             'translation': '',  # filled in after scoring
         })
+
+        if (idx + 1) % 20 == 0 or idx == total - 1:
+            print(f'   Scored: {idx+1}/{total}', file=sys.stderr)
 
     scored.sort(key=lambda x: x['similarity'], reverse=True)
     fetched_count = len(fetched)
