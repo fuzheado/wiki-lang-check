@@ -411,6 +411,8 @@ def generate_report(scored, all_results, total, successful, ideal_sentence, outp
     lines.append(f'**Ideal sentence:** "{ideal_sentence}"')
     lines.append(f'**Run:** {os.path.basename(output_paths["json"])}')
     lines.append(f'**Date:** {datetime.datetime.now().strftime("%Y-%m-%d %H:%M UTC")}')
+    wiki_url = f'https://en.wikipedia.org/wiki/{article_title.replace(" ", "_")}'
+    lines.append(f'**Article:** [{article_title}]({wiki_url})')
     lines.append('')
     lines.append(f'**Total languages checked:** {total}')
     lines.append(f'**Successful fetches:** {successful}')

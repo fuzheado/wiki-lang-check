@@ -1,8 +1,8 @@
 {
   "article": "Wikimania",
   "ideal_sentence": "Wikimania is the Wikimedia movement's annual conference, organized by the community of contributors and hosted by the Wikimedia Foundation.",
-  "run_file": "Wikimania_run003_results.json",
-  "timestamp": "2026-06-12T19:35:10.185397Z",
+  "run_file": "Wikimania_run002_results.json",
+  "timestamp": "2026-06-12T19:41:23.316525Z",
   "scoring_method": "Combined (0.7 × best-sentence + 0.3 × lead-section)",
   "model": "sentence-transformers/LaBSE",
   "total_languages": 94,

@@ -1,8 +1,9 @@
 # Lead Consistency Report: Wikimania
 
 **Ideal sentence:** "Wikimania is the Wikimedia movement's annual conference, organized by the community of contributors and hosted by the Wikimedia Foundation."
-**Run:** Wikimania_run003_results.json
-**Date:** 2026-06-12 15:35 UTC
+**Run:** Wikimania_run002_results.json
+**Date:** 2026-06-12 15:41 UTC
+**Article:** [Wikimania](https://en.wikipedia.org/wiki/Wikimania)
 
 **Total languages checked:** 94
 **Successful fetches:** 90
