@@ -66,6 +66,20 @@ python3 wiki_lang_check.py --flushcache --translate --article "Article" --senten
 
 > **Note:** Translations are **off by default** to save ~30s per run. Enable them with `--translate` when you need to see what a language's lead actually says in English.
 
+## Domain Resolution
+
+The Action API's `prop=langlinks` returns language codes in CLDR/BCP 47 format. These sometimes differ from Wikipedia's actual domain names. For example:
+
+| CLDR code | Domain | Why |
+|-----------|--------|-----|
+| `yue` | `zh-yue.wikipedia.org` | Cantonese Wikipedia |
+| `nan` | `zh-min-nan.wikipedia.org` | Min Nan Chinese Wikipedia |
+| `nb` | `no.wikipedia.org` | Norwegian Bokmål redirects to Norwegian |
+
+Rather than maintaining a fragile lookup table, the tool fetches the [Wikimedia Site Matrix API](https://en.wikipedia.org/w/api.php?action=sitematrix) (`action=sitematrix`) at pipeline start. This authoritative registry maps all ~362 language codes to their correct domains. The Site Matrix is self-updating — any future code reassignments are automatically handled.
+
+A static fallback dict covers edge cases the Site Matrix doesn't include (like `nb`→`no`).
+
 ## Usage
 
 ### Quick start
@@ -254,14 +268,23 @@ With LaBSE, **South Asian languages now score realistically**:
 
 **Key finding:** Most language editions frame Wikimania as *"a conference **of** the Wikimedia Foundation"* rather than *"a conference **of the Wikimedia movement** organized **by the community**."* This is a systematic framing divergence.
 
-## Status: Initial Prototype
+## Status: Active Development
 
-This is a **first-version proof of concept**. The approach — cross-lingual lead comparison via sentence embeddings + Google Translate — has been tested on one article (Wikimania) with promising results, but more runs on diverse articles are needed to validate:
+This tool has been tested across multiple articles (Wikimania, Sun, Test, Teletubbies) and has matured through several iterations:
 
-- Whether the embedding model's similarity scores correlate reliably with human judgment across different scripts and language families
-- Whether Google Translate handles the varied lead structures (infobox-heavy, stub articles, multi-paragraph leads) without breaking
-- Whether the 70/30 scoring weight split is optimal, or whether it should be tuned per language family
-- How the tool behaves with articles that have very different interlanguage link patterns (e.g., local-interest topics with fewer translations)
+| Area | Status |
+|------|--------|
+| Core pipeline (discover → fetch → score → report) | **Stable** |
+| Latent LaBSE model (default) | **Stable** |
+| distilUSE fallback (`--model distiluse`) | **Stable** |
+| Lead cache (`.lead_cache.json`) | **Stable** |
+| Translation cache + `--translate` flag | **Stable** |
+| Interactive sentence picker | **Stable** |
+| Scoring progress meter | **Stable** |
+| Site Matrix domain resolution | **Stable** |
+| Rate-limit handling (429 retry) | **Stable** |
+| Disambiguation page detection | **Stable** |
+| Per-article run counters | **Stable** |
 
 **Use the results as directional guidance, not definitive truth.** Manual spot-checking of specific language editions is still recommended before making editorial decisions based on this tool's output.
 

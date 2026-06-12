@@ -585,3 +585,52 @@ Use **Option 1**: Per-article counters stored as JSON.
 
 **Negative:**
 - If two users share the same counter file (unlikely for a CLI tool), counters would interleave
+
+---
+
+## ADR-014: Site Matrix API for Domain Resolution
+
+**Status:** Accepted  
+**Date:** 2026-06-12  
+**Deciders:** Ali  
+
+### Context
+
+The Action API's `prop=langlinks` returns language codes in CLDR/BCP 47 format. These do not always match the actual Wikipedia domain name. For example, the langlinks value `yue` (Cantonese) must be fetched from `zh-yue.wikipedia.org`, not `yue.wikipedia.org`. Other examples: `nan`→`zh-min-nan`, `nb`→`no`.
+
+An earlier version of the tool had these as a hardcoded lookup table, which was fragile and would get stale as Wikimedia reassigns language codes.
+
+### Options Considered
+
+1. **Site Matrix API at startup (chosen)** — Fetch `action=sitematrix&smtype=language` once per run to build an authoritative `{code: domain}` mapping. Use the `url` field from each site entry (not `dbname`, which contains underscores). Supplement with a small static fallback for edge cases (3 entries).
+
+2. **Hardcoded lookup table** — Maintain a static dict of known mismatches. Fragile, requires manual updates when codes change.
+
+3. **Try multiple domains** — Attempt `{code}.wikipedia.org`, `zh-{code}.wikipedia.org`, etc., falling back until one succeeds. Slow, wastes API calls, unpredictable.
+
+4. **Ignore the problem** — Accept that ~4 languages per article (on average) will be "not found" due to domain mismatches. Misses real data.
+
+### Decision
+
+Use **Option 1**: Site Matrix API at startup with a 3-entry static fallback.
+
+### Rationale
+
+- **Authoritative** — The Site Matrix is maintained by Wikimedia operations; it's the source of truth for all wiki domains
+- **Self-updating** — When Wikimedia reassigns or adds language codes, the Site Matrix reflects it immediately. No code changes needed.
+- **Small static fallback** — Only 3 entries (`yue`, `nan`, `nb`) cover cases the matrix doesn't handle
+- **Fast** — API call completes in ~1 second, runs once per pipeline
+- **~362 domains mapped** — Covers all Wikipedia language editions
+
+### Consequences
+
+**Positive:**
+- `yue`, `nan`, `nb` and any future code reassignments are handled automatically
+- Teletubbies article went from 4 domain failures to 1 (the remaining failure is a genuinely missing article, not a domain issue)
+- No stale lookup table to maintain
+- The Site Matrix also provides metadata about each wiki (number of pages, project type, etc.), potentially useful for future features
+
+**Negative:**
+- Adds ~1 second and one API call to every run
+- Relies on the Site Matrix endpoint being available (it's a core MediaWiki API, very reliable)
+- The static fallback still needs updating if Wikimedia changes domains for `yue`, `nan`, or `nb`

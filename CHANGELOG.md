@@ -2,6 +2,26 @@
 
 Tracking implemented features, in-progress work, and planned enhancements.
 
+## Handoff Summary (2026-06-12)
+
+**Project state:** The core pipeline is feature-complete and stable. All initial goals are met:
+- Cross-lingual lead comparison with LaBSE (109 languages)
+- Dual-metric scoring with best-sentence + lead-section matching
+- Interactive sentence picker, disk caching, rate-limit handling
+- Site Matrix domain resolution, disambiguation detection
+- Translation as optional flag
+
+**Outstanding feature requests** (see below for details):
+1. Non-English base language (`--lang fr`)
+2. Selective translation for top/bottom N
+3. Per-clause scoring
+4. Longitudinal tracking
+5. Better article discovery (redirect fallbacks)
+
+**Known issues:** None at this time. The 16 failures on large articles like "Sun" are genuine (domain redirects, missing articles), not bugs.
+
+**To pick up where we left off:** `python3 wiki_lang_check.py --help` shows all options. See the README for setup.
+
 ---
 
 ## ✅ Implemented
@@ -28,6 +48,7 @@ Tracking implemented features, in-progress work, and planned enhancements.
 | **Translations off by default** | **2.0** | `--translate` flag enables Google Translate (~30s). Off by default to keep runs fast. Report shows "Translations: off" banner. |
 | **Interactive sentence picker** | **2.0** | When `--article` is given without `--sentence`, fetches the English lead and lets the user pick a sentence by number (or "a" for all). No more copying and pasting. |
 | **Per-article run counters** | **2.0** | Run numbers are now per-article (JSON dict), not global. Each article's runs start at 001 regardless of other articles tested. |
+| **Site Matrix domain resolution** | **2.0** | Language codes from the Action API (CLDR) sometimes don't match Wikipedia domain names. The Site Matrix API (`action=sitematrix`) is now fetched at pipeline start to build an authoritative code→domain mapping. Fixes `yue`→`zh-yue`, `nan`→`zh-min-nan`, `nb`→`no`, and any future mismatches automatically. |
 
 ---
 
@@ -49,8 +70,8 @@ Allow `--lang fr` or `--lang ar` so the ideal sentence can be in French, Arabic,
 
 ### P2: Better article discovery & error handling
 
-- **Redirect detection:** When an article title redirects in a particular language edition, detect and report it (e.g., `nb.wikipedia.org` → `no.wikipedia.org`)
-- **Language code resolution:** Some Wikipedia language codes differ from Wikimedia's standard codes (e.g., `yue` may resolve to `zh-yue`, `nb` redirects to `no`). Implement a lookup table or fallback chain.
+- ~~**Language code resolution:** Fixed via the Site Matrix API (`action=sitematrix`), which builds an authoritative `{code: domain}` mapping at pipeline start. Handles `yue`→`zh-yue`, `nan`→`zh-min-nan`, `nb`→`no`, and any future reassignments automatically.~~ ✅
+- **Redirect detection:** When an article title redirects in a particular language edition, detect and report it (e.g., `nb.wikipedia.org` redirects to `no.wikipedia.org` are now handled)
 - **Page-not-found fallback:** When the REST API returns 404 but the Action API knows the page exists, try the Action API as a fallback.
 
 **Why:** 4 of 94 languages returned no data on the initial Wikimania run due to these issues. Better error handling would recover most of them.
