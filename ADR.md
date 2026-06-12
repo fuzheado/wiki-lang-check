@@ -319,6 +319,136 @@ Use **Option 1**: Google Translate via the `deep-translator` Python library.
 
 ---
 
+## ADR-009: Model Registry Pattern (LaBSE as Default, --model Flag)
+
+**Status:** Accepted  
+**Date:** 2026-06-12  
+**Deciders:** Ali  
+
+### Context
+
+Initially the tool used a single hardcoded model (`distiluse-base-multilingual-cased-v2`, 50+ languages). Testing revealed poor coverage for South Asian Brahmic scripts (Kannada, Telugu, Tamil, Malayalam — all scoring near zero regardless of content quality). LaBSE (109 languages) was identified as a better fit, but we wanted to keep distilUSE available as a faster, lighter fallback.
+
+### Options Considered
+
+1. **Model registry with CLI flag (chosen)** — A `MODEL_REGISTRY` dict mapping short names to model metadata (short name, full HuggingFace path, weight file, size hint, language count). A `set_model()` function configures globals from the registry. CLI flag `--model labse|distiluse`.
+
+2. **Two separate scripts** — One for each model. Code duplication, maintenance burden.
+
+3. **Environment variable** — `MODEL=distiluse python3 wiki_lang_check.py ...`. Less discoverable than a CLI flag.
+
+### Decision
+
+Use **Option 1**: Model registry with `--model` CLI flag. LaBSE is the default because it covers all our target languages.
+
+### Rationale
+
+- **Single code path** — All models use the same pipeline; only the embedding changes
+- **Discoverable** — `--help` shows available models
+- **Extensible** — Adding a third model is one entry in `MODEL_REGISTRY` dict
+- **Lightweight dispatch** — The registry holds strings, not loaded models; no memory cost for unused models
+
+### Consequences
+
+**Positive:**
+- LaBSE fixed South Asian scores from ~-0.02 to ~0.70–0.83
+- Users can fall back to distilUSE for speed or smaller downloads
+- Adding a new model is a 4-line dict entry
+
+**Negative:**
+- Slightly more complex CLI (one more flag to document)
+- Users must know which model to choose
+
+---
+
+## ADR-010: Disk Cache for Lead Fetching
+
+**Status:** Accepted  
+**Date:** 2026-06-12  
+**Deciders:** Ali  
+
+### Context
+
+Each run fetches the lead section of the same article from 100–300+ Wikipedia language editions via HTTP. If a user re-runs the tool on the same article (e.g., with a different ideal sentence or a different model), every language is re-fetched. This is wasteful and risks hitting rate limits.
+
+### Options Considered
+
+1. **Disk cache with JSON file (chosen)** — `.lead_cache.json` stores `{lang:title: lead_text}`. Checked before HTTP; written after success. Loaded at pipeline start, saved after fetch completes.
+
+2. **In-memory cache only** — Wouldn't survive between runs. Only prevents duplicate fetches within a single run (which we already do via `all_results`).
+
+3. **SQLite database** — More structured but adds a dependency. Overkill for a simple key-value store of ~300 entries.
+
+4. **No caching** — Every run is a full re-fetch. Unnecessary HTTP traffic and slower re-runs.
+
+### Decision
+
+Use **Option 1**: JSON file on disk.
+
+### Rationale
+
+- **Simple** — No extra dependencies, no schema to maintain
+- **Cross-session** — Cache persists between runs, even days apart
+- **Small** — ~100 KB for 300 languages, trivial I/O cost
+- **Transparent** — Easy to inspect and debug (`cat .lead_cache.json | jq`)
+
+### Consequences
+
+**Positive:**
+- Re-runs on the same article skip all HTTP — near-instant fetch phase
+- Reduced rate-limit risk on subsequent runs (only new/changed articles need fetching)
+- `--flushcache` gives users control to force a fresh fetch when article content changes
+
+**Negative:**
+- Stale data if the Wikipedia article is edited between runs — user must remember `--flushcache`
+- ~300 KB write per run (negligible)
+
+---
+
+## ADR-011: Rate-Limit Handling with Exponential Backoff
+
+**Status:** Accepted  
+**Date:** 2026-06-12  
+**Deciders:** Ali  
+
+### Context
+
+The Wikimedia REST API enforces rate limits via HTTP 429 responses. With 8–12 concurrent workers and 300+ language editions, the tool triggers these limits after ~100 requests. The old `fetch_lead()` treated any non-200 as a failure, causing ~150 false "missing" languages for the Sun article.
+
+### Options Considered
+
+1. **Retry with exponential backoff + Retry-After (chosen)** — On 429, read the `Retry-After` header, add exponential backoff (`2^attempt` seconds), sleep, and retry up to 3 times. Also retries on `requests.Timeout`. Handles 414 (URI too long) with re-encoded URL.
+
+2. **Fixed delay between all requests** — Add `time.sleep(0.2)` between every request regardless of rate limit. Slower for small articles, wastes time when not rate-limited.
+
+3. **Reduce concurrency to 1** — Serial requests. Too slow for 300+ languages (~2 minutes).
+
+4. **Ignore rate limits** — The old behavior. Lost ~50% of languages on large articles.
+
+### Decision
+
+Use **Option 1**: Retry with exponential backoff + `Retry-After` header respect. Combined with reducing default workers from 12 to 6.
+
+### Rationale
+
+- **Respects server signals** — `Retry-After` tells us exactly how long to wait
+- **Minimal overhead on success** — No artificial delays when requests are fast
+- **Self-healing** — After a 429, the backoff naturally paces subsequent requests
+- **Combined with worker reduction** — Fewer workers = fewer concurrent 429s, so retries are rare
+
+### Consequences
+
+**Positive:**
+- Sun article: 103/312 found → 296/312 found
+- 414 errors now handled with re-encoded URLs
+- Timeouts retried rather than failing silently
+
+**Negative:**
+- 429 retries add latency (a few extra seconds per batch)
+- 16 languages still fail (mostly genuine 404s for redirected domains like `gsw.wikipedia.org`)
+
+---
+
 ## ADR-007: Weighted Scoring over Raw Cosine Similarity
 
 **Status:** Accepted  
