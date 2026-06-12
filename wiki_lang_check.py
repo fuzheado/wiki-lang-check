@@ -194,6 +194,47 @@ def make_output_paths(article_title, run_number):
     }
 
 
+# Common disambiguation patterns across Wikipedia languages.
+# These suffixes in a page title indicate a disambiguation page rather than
+# a real article. When a fetch fails on one of these, it's likely a Wikidata
+# interlanguage link quality issue — the link points to a DAB page instead
+# of a real article about the topic.
+_DISAMBIG_PATTERNS = (
+    '(disambiguation)',            # English
+    '(egyértelműsítő lap)',        # Hungarian
+    '(desambiguación)',            # Spanish
+    '(desambiguação)',             # Portuguese
+    '(Begriffsklärung)',           # German
+    '(homonymie)',                 # French
+    '(disambigua)',                # Italian
+    '(disambiguazione)',           # Italian (alt)
+    '(消歧義)', '(消歧义)',         # Chinese
+    '(曖昧さ回避)',                  # Japanese
+    '(동음이의)', '(동음이의어)',      # Korean
+    '(anlam ayrımı)',              # Turkish
+    '(rozcestník)',                # Czech
+    '(ujednoznacznienie)',        # Polish
+    '(razločitev)',                # Slovenian
+    '(višeznačna odrednica)',     # Croatian
+    '(flertydig)',                 # Danish
+    '(täsmennyssivu)',             # Finnish
+    '(olika betydelser)',          # Swedish
+    '(doorverwijspagina)',         # Dutch
+    '(pagina de dezambiguizare)',  # Romanian
+    '(неоднозначность)',           # Russian
+    '(вишезначна одредница)',      # Serbian
+    '(значения)',                  # Russian/Ukrainian
+    '(перенаправление)',           # Russian redirect
+    '(توضيح)',                     # Arabic
+    '(ابهام‌زدایی)',               # Persian
+)
+
+
+def _is_disambiguation_title(title):
+    """Check if a page title looks like a disambiguation page."""
+    return any(pattern in title for pattern in _DISAMBIG_PATTERNS)
+
+
 def compact_language_summary(results, successful, failed_count):
     """Print a compact one-line-per-region summary instead of one-per-language."""
     # Group by rough script/region
@@ -253,8 +294,19 @@ def compact_language_summary(results, successful, failed_count):
     print(f'  Languages: {len(results)} total ({status})', file=sys.stderr)
     if failed_count > 0:
         failed_langs = [r for r in results if not r.get('lead')]
-        failed_codes = ', '.join(f'{r["lang"]}({r["title"]})' for r in failed_langs)
-        print(f'    Failed: {failed_codes}', file=sys.stderr)
+        # Separate genuine failures from likely disambiguation pages
+        dab_failures = [r for r in failed_langs if _is_disambiguation_title(r['title'])]
+        other_failures = [r for r in failed_langs if not _is_disambiguation_title(r['title'])]
+
+        if other_failures:
+            codes = ', '.join(f'{r["lang"]}({r["title"]})' for r in other_failures)
+            print(f'    Failed: {codes}', file=sys.stderr)
+        if dab_failures:
+            codes = ', '.join(f'{r["lang"]}({r["title"]})' for r in dab_failures)
+            print(f'    ⚠️  Disambiguation pages (not real articles): {codes}', file=sys.stderr)
+            print(f'        These are likely Wikidata interlanguage link quality issues.', file=sys.stderr)
+            print(f'        The interlanguage link points to a disambiguation page instead of', file=sys.stderr)
+            print(f'        a real article about the topic. Consider fixing the Wikidata item.', file=sys.stderr)
     for label, codes in groups:
         if codes:
             prefix = ', '.join(codes[:12])
