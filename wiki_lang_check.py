@@ -7,9 +7,9 @@ each language edition's lead section matches that ideal, using multilingual
 sentence embeddings. Produces a ranked Markdown report with histograms.
 
 Usage:
-  python3 pipeline_v2.py --article "Article" --sentence "Ideal sentence..."
-  python3 pipeline_v2.py example
-  python3 pipeline_v2.py --help
+  python3 wiki_lang_check.py --article "Article" --sentence "Ideal sentence..."
+  python3 wiki_lang_check.py example
+  python3 wiki_lang_check.py --help
 """
 import argparse
 import json
@@ -32,8 +32,41 @@ HEADERS = {
 }
 
 RUN_COUNTER_FILE = os.path.join(SCRIPT_DIR, '.run_counter')
-MODEL_SHORT = 'distiluse-base-multilingual-cased-v2'
-MODEL_NAME = f'sentence-transformers/{MODEL_SHORT}'
+
+# ── Model selection ──
+# Set via set_model() before running the pipeline.
+# Default: LaBSE (109 languages, excellent South Asian coverage).
+# Alternative: distiluse-base-multilingual-cased-v2 (50+ languages, faster, smaller).
+MODEL_SHORT = None  # set by set_model()
+MODEL_NAME = None   # set by set_model()
+
+MODEL_REGISTRY = {
+    'labse': {
+        'short': 'LaBSE',
+        'full': 'sentence-transformers/LaBSE',
+        'weight_file': 'pytorch_model.bin',
+        'size_hint': '~1.8 GB',
+        'languages': 109,
+        'description': 'Best South Asian script coverage, purpose-built for cross-lingual similarity',
+    },
+    'distiluse': {
+        'short': 'distiluse-base-multilingual-cased-v2',
+        'full': 'sentence-transformers/distiluse-base-multilingual-cased-v2',
+        'weight_file': 'model.safetensors',
+        'size_hint': '~500 MB',
+        'languages': 50,
+        'description': 'Faster, smaller, but weaker coverage for South Asian scripts',
+    },
+}
+
+
+def set_model(choice):
+    """Set the embedding model. Choice: 'labse' (default) or 'distiluse'."""
+    global MODEL_SHORT, MODEL_NAME
+    cfg = MODEL_REGISTRY[choice]
+    MODEL_SHORT = cfg['short']
+    MODEL_NAME = cfg['full']
+    return cfg
 
 # Translation cache: in-memory dict with disk backup
 # Saved to .translation_cache.json so repeated runs avoid re-translation
@@ -194,13 +227,23 @@ def compact_language_summary(results, successful, failed_count):
 def load_model():
     """Load the multilingual sentence model, with size warning if not cached."""
     from sentence_transformers import SentenceTransformer
+    # Determine weight filename from registry
+    weight_file = None
+    for cfg in MODEL_REGISTRY.values():
+        if cfg['full'] == MODEL_NAME:
+            weight_file = cfg['weight_file']
+            size_hint = cfg['size_hint']
+            langs = cfg['languages']
+            break
+    if weight_file is None:
+        weight_file = 'model.safetensors'
+        size_hint = '~500 MB'
+        langs = 50
+
     # Check if model is already cached in huggingface_hub's cache
     try:
         import huggingface_hub
-        # Check for either safetensors or pytorch format
-        cached = huggingface_hub.try_to_load_from_cache(MODEL_NAME, 'model.safetensors')
-        if cached is None or not os.path.exists(cached):
-            cached = huggingface_hub.try_to_load_from_cache(MODEL_NAME, 'pytorch_model.bin')
+        cached = huggingface_hub.try_to_load_from_cache(MODEL_NAME, weight_file)
         already_cached = cached is not None and os.path.exists(cached)
     except Exception:
         already_cached = False
@@ -208,7 +251,8 @@ def load_model():
     if not already_cached:
         print(file=sys.stderr)
         print('╔══════════════════════════════════════════════════════════════╗', file=sys.stderr)
-        print('║  FIRST RUN — downloading model (~500 MB)                  ║', file=sys.stderr)
+        print(f'║  FIRST RUN — downloading model {size_hint:>24s} ║', file=sys.stderr)
+        print(f'║  ({langs} languages)                                        ║', file=sys.stderr)
         print('║  This happens once. Subsequent runs use the cached model.  ║', file=sys.stderr)
         print('╚══════════════════════════════════════════════════════════════╝', file=sys.stderr)
         print(file=sys.stderr)
@@ -638,7 +682,8 @@ def show_usage():
       --sentence TEXT   The ideal lead sentence to compare against
 
     OPTIONS
-      --help            Show this message and exit
+      --model   TEXT   Embedding model: 'labse' (default, 109 langs) or 'distiluse' (50 langs)
+      --help           Show this message and exit
 
     EXAMPLE
       python3 wiki_lang_check.py --article "Wikimania" --sentence "Wikimania is the \\
@@ -646,12 +691,18 @@ def show_usage():
         contributors and hosted by the Wikimedia Foundation."
 
       Or just run the built-in example:
-      python3 pipeline_v2.py example
+      python3 wiki_lang_check.py example
+
+    MODELS
+      labse (default)    LaBSE — 109 languages, excellent South Asian script
+                        coverage (~1.8 GB download on first use)
+      distiluse          distiluse-base-multilingual-cased-v2 — 50+ languages,
+                        faster and smaller (~500 MB), but weaker coverage for
+                        South Asian scripts (Kannada, Telugu, Tamil, etc.)
 
     NOTES
-      • On first run, ~500 MB of model weights are downloaded.
-        (PyTorch ~800 MB is also needed if not already installed.)
-        Both are cached locally; subsequent runs are faster.
+      • On first run, model weights are downloaded (size depends on model).
+        Both models are cached locally; subsequent runs are faster.
       • Each run gets a sequence number and produces files named:
           <Article>_runNNN_results.json
           <Article>_runNNN_report.md
@@ -676,6 +727,9 @@ def main():
                         help='Ideal lead sentence to compare against')
     parser.add_argument('--help', action='store_true',
                         help='Show usage and exit')
+    parser.add_argument('--model', type=str, default='labse',
+                        choices=['labse', 'distiluse'],
+                        help='Embedding model: labse (default, 109 langs) or distiluse (50 langs, faster)')
     parser.add_argument('command', nargs='?', default=None,
                         help='Subcommand: "example"')
 
@@ -699,8 +753,13 @@ def main():
         sentence = args.sentence
     else:
         print('Error: --article and --sentence are required, or use "example".', file=sys.stderr)
-        print('Run "python3 pipeline_v2.py --help" for details.', file=sys.stderr)
+        print('Run "python3 wiki_lang_check.py --help" for details.', file=sys.stderr)
         sys.exit(1)
+
+    # Set the chosen model
+    model_cfg = set_model(args.model)
+    print(f'🧠 Model: {model_cfg["short"]} ({model_cfg["languages"]} languages, {model_cfg["size_hint"]})', file=sys.stderr)
+    print(file=sys.stderr)
 
     run_number = get_run_number()
     run_pipeline(article, sentence, run_number)

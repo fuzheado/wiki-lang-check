@@ -72,6 +72,7 @@ The `example` mode is a quick way to see how the tool works without specifying a
 |----------|----------|-------------|
 | `--article TEXT` | Yes (or `example`) | Wikipedia article title (e.g., `"Wikimania"`) |
 | `--sentence TEXT` | Yes (or `example`) | Ideal lead sentence to compare against |
+| `--model TEXT` | No | Embedding model: `labse` (default, 109 langs) or `distiluse` (50 langs, faster) |
 | `--help` | No | Show detailed usage message |
 | `example` | No (subcommand) | Run the built-in Wikimania example |
 
@@ -133,8 +134,41 @@ Results are cached, so re-running the same article uses cached translations and 
 - Machine translation quality varies by language pair; it's best for European languages and weaker for low-resource languages
 - If translation fails (network error, rate limit), the report shows `[translation failed]`
 
-### Model: `distiluse-base-multilingual-cased-v2`
+### Models
 
+Two models are available, switchable via the `--model` flag:
+
+#### `labse` (default) — LaBSE (Language-agnostic BERT Sentence Embedding)
+- 109 languages
+- Specifically trained for cross-lingual sentence similarity
+- **Excellent coverage of South Asian scripts** (Telugu, Kannada, Tamil, Malayalam, Bengali, etc.)
+- ~1.8 GB download on first use
+- 768-dimensional embeddings
+
+#### `distiluse` — `distiluse-base-multilingual-cased-v2`
+- 50+ languages
+- Distilled from Universal Sentence Encoder
+- Faster inference, smaller download (~500 MB)
+- **Poor coverage of South Asian scripts** — Kannada, Telugu, Tamil, Malayalam, Assamese, Punjabi, Khmer are not supported, producing near-zero similarity scores
+- 512-dimensional embeddings
+
+#### Impact of model choice on South Asian languages
+
+| Language | distilUSE (old default) | LaBSE (new default) |
+|----------|------------------------|---------------------|
+| Tamil (ta) | -0.01 | **0.83** |
+| Kannada (kn) | 0.01 | **0.81** |
+| Telugu (te) | -0.01 | **0.80** |
+| Malayalam (ml) | -0.01 | **0.79** |
+| Bengali (bn) | -0.02 | **0.64** |
+
+#### LaBSE model details
+- 768-dimensional multilingual embeddings
+- Trained on translation pairs across 109 languages (Google Research, 2022)
+- Strong coverage for South Asian Brahmic scripts (Telugu, Kannada, Tamil, Malayalam, Bengali, Assamese, Punjabi, Khmer)
+- Works well for semantic similarity between non-translation pairs (our use case)
+
+#### distilUSE model details (legacy)
 - 512-dimensional multilingual embeddings
 - Trained on 50+ languages (distilled from Universal Sentence Encoder multilingual)
 - Supports: Arabic, Chinese, Dutch, English, French, German, Greek, Hebrew, Hindi, Italian, Japanese, Korean, Polish, Portuguese, Russian, Spanish, Thai, Turkish, Vietnamese, and many more
@@ -146,15 +180,22 @@ From the initial run across 94 language editions. The "translation" column is a 
 
 | Lang | Score | Translation (Google Translate) |
 |------|-------|-------------------------------|
-| 🇬🇧 en | **0.91** | *(English — original)* |
+| 🇬🇧 en | **0.92** | *(English — original)* |
+| 🇸🇮 sl | **0.90** | "annual conference for users of Wiki projects coordinated by the Wikimedia Foundation" |
+| 🇬🇷 el | **0.89** | "annual conference of the Wikimedia movement, organized by volunteers and hosted by the WMF" |
+| 🇨🇿 cs | **0.89** | "conference of users of wiki projects managed by the Wikimedia Foundation" |
 | 🇪🇸 es | **0.88** | "annual conference of the Wikimedia movement, organized by volunteers and sponsored by the WMF" |
-| 🇦🇷 an | **0.85** | "annual conference of the Wikimedia movement, organized by volunteers and sponsored by the WMF" |
-| 🇬🇷 el | **0.83** | "annual conference of the Wikimedia movement, organized by volunteers and hosted by the WMF" |
 | 🇳🇱 nl | **0.77** | "annual conference for users of wiki projects created by the WMF" |
 | 🇩🇪 de | **0.69** | "international conference organized annually by the WMF at different locations" |
 | 🇫🇷 fr | **0.69** | "main conference organized by the Wikimedia foundation from 2005" |
 | 🇨🇳 zh | **0.56** | "academic conference hosted by the WMF" |
-| 🏴 ckb | **0.64** | "annual conference of the Wikimedia movement organized by volunteers and hosted by the WMF" — *content is near-perfect but Arabic script scores low due to model bias* |
+
+With LaBSE, **South Asian languages now score realistically**:
+
+| 🇮🇳 ta | **0.83** | "annual international conference organized by Wikimedia that brings together contributors" |
+| 🇮🇳 kn | **0.81** | "annual conference of the Wikimedia movement, a massive event jointly organized by..." |
+| 🇮🇳 te | **0.80** | "annual conference organized by the community with the help of the Wikimedia Foundation" |
+| 🇰🇭 km | **0.69** | "conference for users of the wiki project operated by Wikimedia Foundation" |
 
 **Key finding:** Most language editions frame Wikimania as *"a conference **of** the Wikimedia Foundation"* rather than *"a conference **of the Wikimedia movement** organized **by the community**."* This is a systematic framing divergence.
 
@@ -171,7 +212,7 @@ This is a **first-version proof of concept**. The approach — cross-lingual lea
 
 ## Limitations
 
-1. **Model coverage gap** — South Asian Brahmic scripts (Telugu, Kannada, Malayalam, Tamil, Assamese, Bengali, Punjabi, Khmer) score artificially low regardless of semantic content quality
+1. **Model coverage for low-resource languages** — LaBSE covers 109 languages, but very low-resource languages (e.g., Tyap `kcg`, Kashmiri `ks`) may still have weaker representation. The legacy `distiluse` model has much worse coverage for South Asian scripts
 2. **Lead ≠ first paragraph** — The REST API `summary` endpoint returns the lead paragraph. For some articles this may be shorter or longer than the true lead section
 3. **One ideal sentence** — The tool compares against a single English sentence. A multi-sentence ideal or multi-language ideal could improve coverage
 4. **No translation quality baseline** — We measure semantic similarity, not correctness. A high score means "similar framing," which could come from a faithful translation or from a superficial match

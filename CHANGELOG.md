@@ -20,6 +20,7 @@ Tracking implemented features, in-progress work, and planned enhancements.
 | Parallel subagent pipeline | 1.0 | 10 batches × 8 worker agents for lead fetching |
 | **Machine translation in reports** | **2.0** | Each lead's best-matching sentence auto-translated to English via Google Translate (`deep-translator`, free, no API key). Shown in report table + top/bottom details |
 | **Lazy imports for fast startup** | **2.0** | Heavy libraries (torch, sentence-transformers, numpy) now imported on-demand only. No-args / `--help` startup dropped from ~5s to ~0.13s |
+| **LaBSE as default model** | **2.0** | Default model changed to LaBSE (109 languages, excellent South Asian coverage). Old distilUSE available via `--model distiluse`. South Asian language scores improved from ~-0.02 to ~0.70-0.83 |
 
 ---
 
