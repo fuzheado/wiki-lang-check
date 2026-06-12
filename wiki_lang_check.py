@@ -44,7 +44,7 @@ MODEL_REGISTRY = {
     'labse': {
         'short': 'LaBSE',
         'full': 'sentence-transformers/LaBSE',
-        'weight_file': 'pytorch_model.bin',
+        'weight_file': 'model.safetensors',
         'size_hint': '~1.8 GB',
         'languages': 109,
         'description': 'Best South Asian script coverage, purpose-built for cross-lingual similarity',
