@@ -26,6 +26,7 @@ Tracking implemented features, in-progress work, and planned enhancements.
 | **`--flushcache` flag** | **2.0** | Deletes both `.lead_cache.json` and `.translation_cache.json` for a fresh run. |
 | **`--workers` flag** | **2.0** | Configurable concurrency (default: 6). Warning at >8 workers about 429 risk. |
 | **Translations off by default** | **2.0** | `--translate` flag enables Google Translate (~30s). Off by default to keep runs fast. Report shows "Translations: off" banner. |
+| **Interactive sentence picker** | **2.0** | When `--article` is given without `--sentence`, fetches the English lead and lets the user pick a sentence by number (or "a" for all). No more copying and pasting. |
 
 ---
 

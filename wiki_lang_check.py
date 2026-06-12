@@ -819,12 +819,14 @@ def show_usage():
 
     USAGE
       python3 wiki_lang_check.py --article "Article title" --sentence "Ideal sentence."
+      python3 wiki_lang_check.py --article "Article title"     # interactive: pick a sentence
       python3 wiki_lang_check.py example
       python3 wiki_lang_check.py --help
 
     REQUIRED
       --article  TEXT   Wikipedia article title (e.g. "Wikimania")
-      --sentence TEXT   The ideal lead sentence to compare against
+      --sentence TEXT   Ideal lead sentence (optional — if omitted, you'll be prompted
+                        to pick a sentence from the article's lead section)
 
     OPTIONS
       --model     TEXT   Embedding model: 'labse' (default, 109 langs) or 'distiluse' (50 langs)
@@ -874,6 +876,59 @@ def show_usage():
     """))
 
 
+def _fetch_en_lead(article_title):
+    """Fetch the English lead paragraph for an article."""
+    encoded = urllib.parse.quote(article_title.replace(' ', '_'), safe='')
+    url = f'https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}'
+    resp = requests.get(url, headers=HEADERS, timeout=15)
+    if resp.status_code == 200:
+        data = resp.json()
+        extract = data.get('extract', '')
+        if extract and extract.strip():
+            return extract
+    return None
+
+
+def _pick_sentence_interactive(article_title):
+    """Fetch the English lead, split into sentences, and let the user pick.
+    Returns the chosen sentence or None."""
+    lead = _fetch_en_lead(article_title)
+    if not lead:
+        print(f'❌ Could not fetch English lead for "{article_title}".', file=sys.stderr)
+        return None
+
+    # Split into sentences (handle ., !, ?)
+    import re
+    raw = lead.replace('\n', ' ').strip()
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw) if s.strip()]
+
+    if not sentences:
+        print(f'❌ Could not parse sentences from the lead of "{article_title}".', file=sys.stderr)
+        return None
+
+    print(f'\n📖 Lead section of "{article_title}":', file=sys.stderr)
+    print(f'   "{lead[:200]}{"..." if len(lead) > 200 else ""}"', file=sys.stderr)
+    print(file=sys.stderr)
+    print('Select which sentence to use as the ideal:', file=sys.stderr)
+    for i, s in enumerate(sentences, 1):
+        display = s[:120] + ('...' if len(s) > 120 else '')
+        print(f'  [{i}] {display}', file=sys.stderr)
+    print(f'  [a] All sentences combined', file=sys.stderr)
+    print(file=sys.stderr)
+
+    while True:
+        try:
+            choice = input('Enter choice (number or a): ').strip()
+            if choice.lower() == 'a':
+                return '. '.join(sentences)
+            idx = int(choice) - 1
+            if 0 <= idx < len(sentences):
+                return sentences[idx]
+            print(f'Please enter 1–{len(sentences)} or "a".', file=sys.stderr)
+        except (ValueError, EOFError):
+            print(f'Please enter 1–{len(sentences)} or "a".', file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Lang-Check: Wikipedia Lead Consistency Analyzer',
@@ -882,7 +937,7 @@ def main():
     parser.add_argument('--article', type=str, default=None,
                         help='Wikipedia article title')
     parser.add_argument('--sentence', type=str, default=None,
-                        help='Ideal lead sentence to compare against')
+                        help='Ideal lead sentence to compare against. If omitted, you\'ll be prompted to pick from the article\'s lead.')
     parser.add_argument('--help', action='store_true',
                         help='Show usage and exit')
     parser.add_argument('--model', type=str, default='labse',
@@ -915,9 +970,16 @@ def main():
     elif args.article and args.sentence:
         article = args.article
         sentence = args.sentence
+    elif args.article and not args.sentence:
+        # Interactive: fetch lead and let user pick
+        article = args.article
+        sentence = _pick_sentence_interactive(article)
+        if sentence is None:
+            sys.exit(1)
+        print(f'📝 Using: "{sentence[:80]}{"..." if len(sentence) > 80 else ""}"', file=sys.stderr)
     else:
         print('Error: --article and --sentence are required, or use "example".', file=sys.stderr)
-        print('Run "python3 wiki_lang_check.py --help" for details.', file=sys.stderr)
+        print('Or just provide --article to pick a sentence interactively.', file=sys.stderr)
         sys.exit(1)
 
     # Flush caches if requested

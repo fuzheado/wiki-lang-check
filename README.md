@@ -76,7 +76,10 @@ source venv/bin/activate
 # Run the built-in Wikimania example:
 python3 wiki_lang_check.py example
 
-# Or run with your own article and ideal sentence:
+# Interactive: pick a sentence from the article's lead:
+python3 wiki_lang_check.py --article "Article"
+
+# Or run with your own ideal sentence:
 python3 wiki_lang_check.py --article "Article" --sentence "Your ideal lead sentence here."
 
 # Show usage info:
@@ -85,12 +88,14 @@ python3 wiki_lang_check.py --help
 
 The `example` mode is a quick way to see how the tool works without specifying arguments.
 
+**Interactive mode:** When you provide `--article` without `--sentence`, the tool fetches the English lead section, splits it into individual sentences, and lets you pick which one to use as the ideal by number. You can also choose `[a]` to use all sentences combined.
+
 ### Arguments
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `--article TEXT` | Yes (or `example`) | Wikipedia article title (e.g., `"Wikimania"`) |
-| `--sentence TEXT` | Yes (or `example`) | Ideal lead sentence to compare against |
+| `--sentence TEXT` | No* | Ideal lead sentence to compare against. If omitted and `--article` is given, you'll be prompted to pick a sentence from the article's lead section interactively. |
 | `--model TEXT` | No | Embedding model: `labse` (default, 109 langs) or `distiluse` (50 langs, faster) |
 | `--workers NUM` | No | Concurrent fetch workers (default: 6). Higher values risk 429 rate limits. |
 | `--translate` | No | Translate lead snippets to English via Google Translate (off by default, ~30s) |
