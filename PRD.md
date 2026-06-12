@@ -139,7 +139,7 @@ Currently there is no automated way to:
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                     Pipeline Driver                       │
-│  (pipeline_v2.py)                                         │
+│  (wiki_lang_check.py)                                      │
 │                                                           │
 │  ┌────────────┐  ┌────────────┐  ┌────────────────────┐ │
 │  │ Discovery  │─▶│ Fetch      │─▶│ Scoring Engine     │ │

@@ -35,8 +35,30 @@ RUN_COUNTER_FILE = os.path.join(SCRIPT_DIR, '.run_counter')
 MODEL_SHORT = 'distiluse-base-multilingual-cased-v2'
 MODEL_NAME = f'sentence-transformers/{MODEL_SHORT}'
 
-# Translation cache: {text: translated_text}
+# Translation cache: in-memory dict with disk backup
+# Saved to .translation_cache.json so repeated runs avoid re-translation
 _translation_cache = {}
+TRANSLATION_CACHE_FILE = os.path.join(SCRIPT_DIR, '.translation_cache.json')
+
+
+def _load_translation_cache():
+    """Load translation cache from disk (if exists)."""
+    global _translation_cache
+    if os.path.exists(TRANSLATION_CACHE_FILE):
+        try:
+            with open(TRANSLATION_CACHE_FILE, 'r', encoding='utf-8') as f:
+                _translation_cache = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            _translation_cache = {}
+
+
+def _save_translation_cache():
+    """Persist translation cache to disk (append-only, best-effort)."""
+    try:
+        with open(TRANSLATION_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_translation_cache, f, ensure_ascii=False)
+    except OSError:
+        pass
 
 # ─────────────────────────────────────────────────────────────────────
 # Helpers
@@ -67,7 +89,7 @@ def translate_snippet(text, max_len=200):
             return _translation_cache[key]
     except Exception:
         pass
-    _translation_cache[key] = f'[translation failed]'
+        _translation_cache[key] = '[translation failed]'
     return _translation_cache[key]
 
 
@@ -585,6 +607,9 @@ def run_pipeline(article_title, ideal_sentence, run_number):
     tail_sim = scored[-1]['similarity']
     print(f'   Tail: {tail_lang} ({tail_sim:.3f})', file=sys.stderr)
 
+    # Save translation cache for next run
+    _save_translation_cache()
+
     return output_paths
 
 
@@ -604,9 +629,9 @@ def show_usage():
     sentence embeddings to measure semantic similarity.
 
     USAGE
-      python3 pipeline_v2.py --article "Article title" --sentence "Ideal sentence."
-      python3 pipeline_v2.py example
-      python3 pipeline_v2.py --help
+      python3 wiki_lang_check.py --article "Article title" --sentence "Ideal sentence."
+      python3 wiki_lang_check.py example
+      python3 wiki_lang_check.py --help
 
     REQUIRED
       --article  TEXT   Wikipedia article title (e.g. "Wikimania")
@@ -616,7 +641,7 @@ def show_usage():
       --help            Show this message and exit
 
     EXAMPLE
-      python3 pipeline_v2.py --article "Wikimania" --sentence "Wikimania is the \\
+      python3 wiki_lang_check.py --article "Wikimania" --sentence "Wikimania is the \\
         Wikimedia movement's annual conference, organized by the community of \\
         contributors and hosted by the Wikimedia Foundation."
 

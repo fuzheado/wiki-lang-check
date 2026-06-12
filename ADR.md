@@ -234,7 +234,7 @@ The pipeline has four distinct phases (discovery, fetch, score, report). Should 
 
 ### Options Considered
 
-1. **Single script (chosen)** — All phases in one Python file (`pipeline_v2.py`), with functions for each phase.
+1. **Single script (chosen)** — All phases in one Python file (`wiki_lang_check.py`), with functions for each phase.
 
 2. **Modular package** — Separate files: `discovery.py`, `fetcher.py`, `scorer.py`, `reporter.py`, with a `main.py` orchestrator.
 
@@ -248,7 +248,7 @@ Use **Option 1**: Single script with functional decomposition.
 
 - **Prototype velocity** — One file is easier to develop, debug, and run
 - **Minimal friction** — No package setup, no `__init__.py`, no import path issues
-- **Easy to run** — `python3 pipeline_v2.py` — no installation, just edit and run
+- **Easy to run** — `python3 wiki_lang_check.py` — no installation, just edit and run
 - **All state in one place** — No cross-module state management needed
 
 ### Consequences

@@ -13,6 +13,7 @@ env/
 
 # ── Local state ──
 .run_counter
+.translation_cache.json
 
 # ── Run output (generated, article-specific) ──
 *_run*.json

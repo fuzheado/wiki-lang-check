@@ -55,13 +55,13 @@ pip install sentence-transformers requests numpy
 source venv/bin/activate
 
 # Run the built-in Wikimania example:
-python3 pipeline_v2.py example
+python3 wiki_lang_check.py example
 
 # Or run with your own article and ideal sentence:
-python3 pipeline_v2.py --article "Article" --sentence "Your ideal lead sentence here."
+python3 wiki_lang_check.py --article "Article" --sentence "Your ideal lead sentence here."
 
 # Show usage info:
-python3 pipeline_v2.py --help
+python3 wiki_lang_check.py --help
 ```
 
 The `example` mode is a quick way to see how the tool works without specifying arguments.
@@ -95,7 +95,7 @@ The run counter persists in `.run_counter` and auto-increments each invocation.
 
 ```
 lang-check/
-├── pipeline_v2.py              # Main CLI: discover → fetch → score → report
+├── wiki_lang_check.py          # Main CLI: discover → fetch → score → report
 ├── score_and_report.py         # Standalone scorer (expects batch_results_*.json)
 ├── CHANGELOG.md                # Feature progress & planned work
 ├── PRD.md                      # Product requirements
