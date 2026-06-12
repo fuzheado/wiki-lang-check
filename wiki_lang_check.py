@@ -483,25 +483,54 @@ def fetch_lead(lang, title):
 # ─────────────────────────────────────────────────────────────────────
 
 def score_leads(ideal_sentence, all_results, model):
-    """Dual-metric scoring: best-sentence (70%) + lead-section (30%)."""
+    """Dual-metric scoring: best-sentence (70%) + lead-section (30%).
+    
+    Optimized via batched encoding: all sentences from all languages are
+    encoded in a single model.encode() call, which is much faster than
+    one tiny call per language (PyTorch parallelizes across the batch).
+    """
     ideal_embedding = model.encode(ideal_sentence)
-
     fetched = [r for r in all_results if r['lead']]
-    scored = []
     total = len(fetched)
 
+    # Collect all sentences and first-parts across all languages
+    # Collect all sentences and first-parts across all languages
+    all_sentences = []       # flat list of every sentence from every lead
+    all_first_parts = []     # flat list of first 3 sentences combined per lead
+    lead_sentences = []      # list of lists: each lead's sentences (for snippet extraction)
+    lead_sizes = []          # number of sentences per lead
+
+    for r in fetched:
+        sentences = [s.strip() for s in r['lead'].replace('\n', ' ').split('.') if s.strip()]
+        n = len(sentences)
+        lead_sentences.append(sentences)
+        lead_sizes.append(n)
+
+        if n:
+            all_sentences.extend(sentences)
+
+        first_part = '. '.join(sentences[:3]) + ('.' if n > 1 else '')
+        all_first_parts.append(first_part if first_part.strip() else '')
+
+    # Batch encode: 2 calls instead of 2×N calls
+    print(f'   Encoding {len(all_sentences)} sentences + {len(all_first_parts)} leads in 2 batches...', file=sys.stderr)
+    sent_embeddings_all = model.encode(all_sentences) if all_sentences else []
+    lead_embeddings_all = model.encode(all_first_parts) if any(all_first_parts) else []
+
+    # Reconstruct per-lead results by slicing the batched embeddings
+    scored = []
+    sent_ptr = 0
     for idx, r in enumerate(fetched):
-        lead_text = r['lead']
-        sentences = [s.strip() for s in lead_text.replace('\n', ' ').split('.') if s.strip()]
+        sentences = lead_sentences[idx]
+        n = lead_sizes[idx]
 
-        if sentences:
-            sent_embeddings = model.encode(sentences)
-            best_sim = max(cos_sim(ideal_embedding, se) for se in sent_embeddings)
-
-            # Best sentence index
+        if n > 0:
+            sent_embs = sent_embeddings_all[sent_ptr:sent_ptr + n]
+            sent_ptr += n
+            best_sim = max(cos_sim(ideal_embedding, se) for se in sent_embs)
             best_idx = 0
             best_sim_val = 0.0
-            for i, se in enumerate(sent_embeddings):
+            for i, se in enumerate(sent_embs):
                 sim = cos_sim(ideal_embedding, se)
                 if sim > best_sim_val:
                     best_sim_val = sim
@@ -510,13 +539,8 @@ def score_leads(ideal_sentence, all_results, model):
             best_sim = 0.0
             best_idx = 0
 
-        # Lead-section match (first 3 sentences)
-        first_part = '. '.join(sentences[:3]) + ('.' if len(sentences) > 1 else '')
-        if first_part.strip():
-            lead_embedding = model.encode(first_part)
-            lead_sim = cos_sim(ideal_embedding, lead_embedding)
-        else:
-            lead_sim = 0.0
+        lead_embedding = lead_embeddings_all[idx] if idx < len(lead_embeddings_all) and all_first_parts[idx] else None
+        lead_sim = cos_sim(ideal_embedding, lead_embedding) if lead_embedding is not None else 0.0
 
         combined = 0.7 * best_sim + 0.3 * lead_sim
 
