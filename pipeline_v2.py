@@ -22,10 +22,6 @@ import datetime
 import textwrap
 
 import requests
-import numpy as np
-from sentence_transformers import SentenceTransformer
-import concurrent.futures
-from deep_translator import GoogleTranslator
 
 # ─────────────────────────────────────────────────────────────────────
 # Constants
@@ -48,6 +44,7 @@ _translation_cache = {}
 
 def cos_sim(a, b):
     """Cosine similarity between two vectors."""
+    import numpy as np
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
@@ -62,6 +59,7 @@ def translate_snippet(text, max_len=200):
     if key in _translation_cache:
         return _translation_cache[key]
     try:
+        from deep_translator import GoogleTranslator
         t = GoogleTranslator(source='auto', target='en')
         result = t.translate(key)
         if result:
@@ -173,6 +171,7 @@ def compact_language_summary(results, successful, failed_count):
 
 def load_model():
     """Load the multilingual sentence model, with size warning if not cached."""
+    from sentence_transformers import SentenceTransformer
     # Check if model is already cached in huggingface_hub's cache
     try:
         import huggingface_hub
@@ -310,6 +309,7 @@ def score_leads(ideal_sentence, all_results, model):
 
 def generate_report(scored, all_results, total, successful, ideal_sentence, output_paths, article_title):
     """Generate comprehensive Markdown report."""
+    import numpy as np
     buckets = {
         "0.90–1.00": [],
         "0.80–0.89": [],
@@ -513,6 +513,7 @@ def generate_report(scored, all_results, total, successful, ideal_sentence, outp
 
 def run_pipeline(article_title, ideal_sentence, run_number):
     """Execute the full discover → fetch → score → report pipeline."""
+    import concurrent.futures
     tag = safe_filename(article_title)
     print(f'\n🔍 Article: {article_title}', file=sys.stderr)
     print(f'📝 Ideal:   {ideal_sentence[:80]}{"..." if len(ideal_sentence) > 80 else ""}', file=sys.stderr)

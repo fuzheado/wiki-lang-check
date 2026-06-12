@@ -19,6 +19,7 @@ Tracking implemented features, in-progress work, and planned enhancements.
 | Markdown report with histogram | 1.0 | ASCII bar chart, ranked table, top/bottom 5 |
 | Parallel subagent pipeline | 1.0 | 10 batches × 8 worker agents for lead fetching |
 | **Machine translation in reports** | **2.0** | Each lead's best-matching sentence auto-translated to English via Google Translate (`deep-translator`, free, no API key). Shown in report table + top/bottom details |
+| **Lazy imports for fast startup** | **2.0** | Heavy libraries (torch, sentence-transformers, numpy) now imported on-demand only. No-args / `--help` startup dropped from ~5s to ~0.13s |
 
 ---
 
