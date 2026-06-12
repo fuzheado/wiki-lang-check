@@ -88,14 +88,32 @@ python3 wiki_lang_check.py --help
 
 The `example` mode is a quick way to see how the tool works without specifying arguments.
 
-**Interactive mode:** When you provide `--article` without `--sentence`, the tool fetches the English lead section, splits it into individual sentences, and lets you pick which one to use as the ideal by number. You can also choose `[a]` to use all sentences combined.
+### Interactive sentence picker
+
+When you provide `--article` without `--sentence`, the tool fetches the English lead section via the REST API, splits it into individual sentences, and presents them numbered:
+
+```
+$ python3 wiki_lang_check.py --article "Wikimania"
+
+📖 Lead section of "Wikimania":
+   "Wikimania is the Wikimedia movement's annual conference..."
+
+Select which sentence to use as the ideal:
+  [1] Wikimania is the Wikimedia movement's annual conference...
+  [2] Topics of presentations and discussions include...
+  [a] All sentences combined
+
+Enter choice (number or a):
+```
+
+This eliminates the friction of copying and pasting sentences from Wikipedia. Handy for quick checks.
 
 ### Arguments
 
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `--article TEXT` | Yes (or `example`) | Wikipedia article title (e.g., `"Wikimania"`) |
-| `--sentence TEXT` | No* | Ideal lead sentence to compare against. If omitted and `--article` is given, you'll be prompted to pick a sentence from the article's lead section interactively. |
+| `--sentence TEXT` | No* | Ideal lead sentence. If omitted with `--article`, you'll be prompted interactively. |
 | `--model TEXT` | No | Embedding model: `labse` (default, 109 langs) or `distiluse` (50 langs, faster) |
 | `--workers NUM` | No | Concurrent fetch workers (default: 6). Higher values risk 429 rate limits. |
 | `--translate` | No | Translate lead snippets to English via Google Translate (off by default, ~30s) |
@@ -130,15 +148,17 @@ lang-check/
 ├── README.md                       # This file
 ├── requirements.txt                # Python dependencies
 ├── .gitignore
-├── .run_counter                    # Persistent run sequence number
+├── .run_counter.json               # Per-article run sequencers (gitignored)
 ├── .lead_cache.json                # Disk cache for fetched leads (gitignored)
 ├── .translation_cache.json         # Disk cache for translations (gitignored)
 ├── venv/                           # Python virtual environment
 ├── examples/                       # Example output files
 │   ├── Wikimania_example_report.md
 │   └── Wikimania_example_results.json
-└── Wikimania_run*                  # Actual run output (numbered)
+└── <Article>_runNNN_*              # Actual run output (numbered per article)
 ```
+
+Each article gets its own run sequence. `Wikimania_run001_report.md`, `Wikimania_run002_report.md`, etc. are sequential per article, not global across all runs.
 ```
 
 ## Scoring Methodology

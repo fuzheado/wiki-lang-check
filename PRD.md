@@ -69,6 +69,7 @@ Currently there is no automated way to:
 | S-05 | Report which sentence in the lead produced the best match | P2 | |
 | S-06 | Report the total number of sentences in each lead | P2 | |
 | S-07 | Translate each lead's best-matching sentence to English | P1 | Using Google Translate, opt-in via `--translate`. Cache results to disk |
+| S-08 | Interactive sentence picker when `--article` given without `--sentence` | P1 | Fetch English lead, split into sentences, prompt user to pick by number |
 
 ### 4.3. Reporting
 
@@ -86,11 +87,13 @@ Currently there is no automated way to:
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | E-01 | Handle 404 (article doesn't exist in that language) gracefully | P0 | Mark as "not found" and continue |
-| E-02 | Handle 429 (rate limiting) with Retry-After header | P0 | |
-| E-03 | Handle network timeouts (15s timeout per request) | P1 | |
+| E-02 | Handle 429 (rate limiting) with Retry-After header + exponential backoff | P0 | Also reduce concurrency (default 6 workers) |
+| E-03 | Handle network timeouts (15s timeout per request) | P1 | Retry with exponential backoff |
 | E-04 | Handle redirects (e.g., nb → no.wikipedia.org) | P1 | Use fallback logic for known redirects |
 | E-05 | Handle leads that return only infobox/meta content (e.g., `{{Infobox recurring event}}`) | P2 | Flag for human review |
 | E-06 | Report model coverage gaps for specific script families | P2 | |
+| E-07 | Handle Unicode control characters (e.g., U+200E) in lead text | P1 | Filter non-printable characters before caching/translation |
+| E-08 | Detect disambiguation pages and annotate in output | P2 | Check `type` field in REST API summary response, or title suffix patterns cross-lingually |
 
 ## 5. Non-Functional Requirements
 

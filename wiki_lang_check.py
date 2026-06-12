@@ -31,7 +31,7 @@ HEADERS = {
     'User-Agent': 'LangCheck/1.0 (https://en.wikipedia.org/wiki/User:Ali) LeadConsistencyChecker/2.0'
 }
 
-RUN_COUNTER_FILE = os.path.join(SCRIPT_DIR, '.run_counter')
+RUN_COUNTER_FILE = os.path.join(SCRIPT_DIR, '.run_counter.json')
 
 # ── Model selection ──
 # Set via set_model() before running the pipeline.
@@ -171,17 +171,20 @@ def safe_filename(text):
     return safe.strip().replace(' ', '_')[:40]
 
 
-def get_run_number():
-    """Read/write a persistent counter so runs never overwrite each other."""
-    n = 1
+def get_run_number(article_title):
+    """Read/write a per-article counter so each article gets its own run sequence.
+    Stored as JSON: {"Wikimania": 3, "Sun": 2, ...}"""
+    counters = {}
     if os.path.exists(RUN_COUNTER_FILE):
-        with open(RUN_COUNTER_FILE) as f:
-            try:
-                n = int(f.read().strip()) + 1
-            except (ValueError, OSError):
-                n = 1
+        try:
+            with open(RUN_COUNTER_FILE, 'r') as f:
+                counters = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            counters = {}
+    n = counters.get(article_title, 0) + 1
+    counters[article_title] = n
     with open(RUN_COUNTER_FILE, 'w') as f:
-        f.write(str(n))
+        json.dump(counters, f)
     return n
 
 
@@ -997,7 +1000,7 @@ def main():
         print(f'   Reduce with --workers 6 or --workers 4 if you see many missing languages.', file=sys.stderr)
     print(file=sys.stderr)
 
-    run_number = get_run_number()
+    run_number = get_run_number(article)
     run_pipeline(article, sentence, run_number,
                  num_workers=args.workers, do_translate=args.translate)
 

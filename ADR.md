@@ -503,3 +503,85 @@ Use **Option 2**: Weighted dual-metric scoring with decomposed clause tracking a
 - 70/30 is an empirical weighting, not theoretically derived
 - Doesn't tell you *which* clause is missing in low-scoring languages — you'd need to inspect the lead snippet manually
 - Future versions could add explicit clause decomposition for per-clause reporting
+
+---
+
+## ADR-012: Interactive Sentence Picker (--article Without --sentence)
+
+**Status:** Accepted  
+**Date:** 2026-06-12  
+**Deciders:** Ali  
+
+### Context
+
+Users frequently want to test the tool on an article using its existing English lead sentence as the ideal. This required copying the sentence from Wikipedia and passing it via `--sentence`, which is friction. The tool could fetch the lead automatically and let the user pick.
+
+### Options Considered
+
+1. **Interactive picker (chosen)** — When `--article` is provided without `--sentence`, fetch the English lead via REST API `/page/summary`, split into sentences on `[.!?]`, show them numbered, prompt user via `input()`. Options: pick by number, or `[a]` for all sentences combined.
+
+2. **Auto-use first sentence** — Just take the first sentence without asking. Faster but less flexible — the user might want a different sentence.
+
+3. **Auto-use entire lead** — Use the entire lead paragraph as the ideal. Too long for a single ideal sentence, dilutes the comparison.
+
+### Decision
+
+Use **Option 1**: Interactive picker with numbered sentences.
+
+### Rationale
+
+- **Minimal friction** — No copying/pasting, just `--article "Wikimania"` and pick a number
+- **User choice** — The first sentence is usually best, but sometimes a later sentence captures the core claim better
+- **All-sentences option** — `[a]` combines all sentences for when the user wants to compare against the full lead
+- **Self-documenting** — Shows the full lead so the user sees what sentences are available
+
+### Consequences
+
+**Positive:**
+- Eliminates the most common friction point in the tool's UX
+- Works as a quick exploration mode: `--article "Foo"` → pick → run
+- The fetched lead is shown, helping users discover what the English article actually says
+
+**Negative:**
+- Adds an interactive prompt, so the tool can't be fully automated without `--sentence`
+- Sentence splitting on `[.!?]` is imperfect — abbreviations ("Dr.", "U.S.") may cause false splits
+
+---
+
+## ADR-013: Per-Article Run Counters
+
+**Status:** Accepted  
+**Date:** 2026-06-12  
+**Deciders:** Ali  
+
+### Context
+
+Originally, run numbers were a single global counter (`get_run_number()` read an integer from `.run_counter`, incremented it, and returned it). This produced filenames like `Sun_run004_report.md` even if no `Sun_run001`, `_run002`, or `_run003` existed — those numbers had been consumed by other articles (Wikimania, Test, etc.). This was confusing.
+
+### Options Considered
+
+1. **Per-article counters in JSON (chosen)** — Store `{"Wikimania": 3, "Sun": 2, ...}` in `.run_counter.json`. Each article gets its own sequential numbering starting at 001.
+
+2. **Timestamp-based filenames** — Use `Sun_20260612_143022_report.md`. No collisions, but harder to find the latest run.
+
+3. **Git commit-style hashes** — Short random suffixes. Meaningless ordering.
+
+### Decision
+
+Use **Option 1**: Per-article counters stored as JSON.
+
+### Rationale
+
+- **Predictable** — `Sun_run001`, `Sun_run002`, `Sun_run003` are always sequential per article
+- **Human readable** — The run number communicates "this is my Nth run on this article"
+- **Simple data structure** — A flat JSON dict with article titles as keys
+
+### Consequences
+
+**Positive:**
+- No more gaps — each article's runs are sequential
+- Easy to find the latest run (highest number = most recent)
+- JSON is human-readable and easy to reset
+
+**Negative:**
+- If two users share the same counter file (unlikely for a CLI tool), counters would interleave
