@@ -75,6 +75,7 @@ Cache previous run results and show score deltas (↑ / ↓) in the report.
 
 ## 💡 Feature Requests (Unprioritized)
 
+- **Selective translation (`--translate top5` / `--translate bottom5`):** Instead of translating all 90+ languages (slow) or none (missing context), allow translating only the most interesting entries — e.g. the top 5 highest-scoring and bottom 5 lowest-scoring leads. This would give the user the key insights without the ~30s full-translation cost.
 - **Model upgrade:** Replace `distiluse-base-multilingual-cased-v2` with `LaBSE` or `intfloat/multilingual-e5-large` for better South Asian script coverage
 - **Web UI (Toolforge):** Deploy as a Toolforge tool with a simple HTML form
 - **CSV export:** Add `--csv` flag for spreadsheet-friendly output
