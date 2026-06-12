@@ -331,19 +331,22 @@ def compact_language_summary(results, successful, failed_count):
     print(f'  Languages: {len(results)} total ({status})', file=sys.stderr)
     if failed_count > 0:
         failed_langs = [r for r in results if not r.get('lead')]
-        # Separate genuine failures from likely disambiguation pages
         dab_failures = [r for r in failed_langs if _is_disambiguation_title(r['title'])]
         other_failures = [r for r in failed_langs if not _is_disambiguation_title(r['title'])]
 
-        if other_failures:
-            codes = ', '.join(f'{r["lang"]}({r["title"]})' for r in other_failures)
-            print(f'    Failed: {codes}', file=sys.stderr)
+        # Show DAB failures first (they're a different category)
         if dab_failures:
             codes = ', '.join(f'{r["lang"]}({r["title"]})' for r in dab_failures)
             print(f'    ⚠️  Disambiguation pages (not real articles): {codes}', file=sys.stderr)
-            print(f'        These are likely Wikidata interlanguage link quality issues.', file=sys.stderr)
-            print(f'        The interlanguage link points to a disambiguation page instead of', file=sys.stderr)
-            print(f'        a real article about the topic. Consider fixing the Wikidata item.', file=sys.stderr)
+            print(f'        Likely Wikidata interlanguage link issue — the link points to a DAB page.', file=sys.stderr)
+
+        # Show other failures with error details
+        for r in other_failures:
+            err = r.get('error', 'Unknown') or 'Unknown'
+            # Truncate long error messages
+            if len(err) > 60:
+                err = err[:57] + '...'
+            print(f'    ❌  {r["lang"]:5s}  {r["title"][:40]:40s}  {err}', file=sys.stderr)
     for label, codes in groups:
         if codes:
             prefix = ', '.join(codes[:12])
@@ -432,15 +435,20 @@ def _domain_for_code(lang):
 
 def fetch_lead(lang, title):
     """Fetch lead section via REST API /page/summary.
+    Returns a dict: {"lead": str or None, "error": str or None}.
     Uses Site Matrix to resolve the correct domain for each language code.
     Checks lead cache first. Retries on 429 with exponential backoff + Retry-After.
     """
     import time
-    # Check cache first
     cache_key = f'{lang}:{title}'
+
+    # Check cache (handle both old string format and new dict format)
     if cache_key in _lead_cache:
         val = _lead_cache[cache_key]
-        return val if val else None
+        if isinstance(val, dict):
+            return val
+        # Old format: string or empty string
+        return {"lead": val if val else None, "error": None if val else "(cached)"}
 
     domain = _domain_for_code(lang)
     encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
@@ -450,9 +458,22 @@ def fetch_lead(lang, title):
         try:
             resp = requests.get(url, headers=HEADERS, timeout=15)
             if resp.status_code == 200:
-                extract = resp.json().get('extract', '')
-                result = extract if (extract and extract.strip()) else None
-                _lead_cache[cache_key] = result if result else ''
+                data = resp.json()
+                extract = data.get('extract', '')
+                if extract and extract.strip():
+                    result = {"lead": extract, "error": None}
+                else:
+                    # Page exists but has no extract — try to explain why
+                    page_type = data.get('type', '')
+                    desc = data.get('description', '')
+                    if page_type == 'disambiguation':
+                        err = 'Disambiguation page (no lead text)'
+                    elif desc and not extract:
+                        err = f'Has description but no extract; type={page_type}'
+                    else:
+                        err = f'No content; type={page_type}'
+                    result = {"lead": None, "error": err}
+                _lead_cache[cache_key] = result
                 return result
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get('Retry-After', 2))
@@ -464,18 +485,31 @@ def fetch_lead(lang, title):
                 url = f'https://{domain}/api/rest_v1/page/summary/{encoded}'
                 resp = requests.get(url, headers=HEADERS, timeout=15)
                 if resp.status_code == 200:
-                    extract = resp.json().get('extract', '')
-                    result = extract if (extract and extract.strip()) else None
-                    _lead_cache[cache_key] = result if result else ''
+                    data = resp.json()
+                    extract = data.get('extract', '')
+                    if extract and extract.strip():
+                        result = {"lead": extract, "error": None}
+                    else:
+                        result = {"lead": None, "error": 'URI too long (414 retry)'}
+                    _lead_cache[cache_key] = result
                     return result
-                return None
-            return None
+                result = {"lead": None, "error": f'HTTP {resp.status_code} (after 414 retry)'}
+                _lead_cache[cache_key] = result
+                return result
+            # Other HTTP errors
+            result = {"lead": None, "error": f'HTTP {resp.status_code}'}
+            _lead_cache[cache_key] = result
+            return result
         except requests.Timeout:
             time.sleep(2 ** attempt)
             continue
-        except Exception:
-            return None
-    return None
+        except Exception as e:
+            result = {"lead": None, "error": f'{type(e).__name__}: {e}'}
+            _lead_cache[cache_key] = result
+            return result
+    result = {"lead": None, "error": 'Max retries exceeded (429)'}
+    _lead_cache[cache_key] = result
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -815,12 +849,12 @@ def run_pipeline(article_title, ideal_sentence, run_number, num_workers=8, do_tr
         }
         for future in concurrent.futures.as_completed(future_map):
             item = future_map[future]
-            lead = future.result()
+            result = future.result()
             all_results.append({
                 'lang': item['lang'],
                 'title': item['title'],
-                'lead': lead,
-                'error': None if lead else 'Not found or error',
+                'lead': result.get('lead'),
+                'error': result.get('error'),
             })
             completed += 1
             if completed % 20 == 0 or completed == total_langs:
