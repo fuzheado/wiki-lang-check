@@ -242,10 +242,12 @@ This is a **first-version proof of concept**. The approach — cross-lingual lea
 
 ## Limitations
 
-1. **Model coverage for low-resource languages** — LaBSE covers 109 languages, but very low-resource languages (e.g., Tyap `kcg`, Kashmiri `ks`) may still have weaker representation. The legacy `distiluse` model has much worse coverage for South Asian scripts
-2. **Lead ≠ first paragraph** — The REST API `summary` endpoint returns the lead paragraph. For some articles this may be shorter or longer than the true lead section
-3. **One ideal sentence** — The tool compares against a single English sentence. A multi-sentence ideal or multi-language ideal could improve coverage
-4. **No translation quality baseline** — We measure semantic similarity, not correctness. A high score means "similar framing," which could come from a faithful translation or from a superficial match
+1. **Model coverage for low-resource languages** — LaBSE covers 109 languages, but very low-resource languages (e.g., Tyap `kcg`, Kashmiri `ks`) may still have weaker representation. The legacy `distiluse` model has much worse coverage for South Asian scripts. Use `--model labse` (default) for best coverage.
+2. **Lead ≠ first paragraph** — The REST API `summary` endpoint returns the lead paragraph. For some articles this may be shorter or longer than the true lead section.
+3. **One ideal sentence** — The tool compares against a single English sentence. A multi-sentence ideal or multi-language ideal could improve coverage.
+4. **No translation quality baseline** — We measure semantic similarity, not correctness. A high score means "similar framing," which could come from a faithful translation or from a superficial match.
+5. **Rate limits on large articles** — Articles with 300+ language editions (e.g., "Sun") may hit Wikimedia API rate limits with default worker counts. The tool retries with exponential backoff, but runs take longer. Use `--workers 4` for very large articles to reduce 429s.
+6. **Cache staleness** — `.lead_cache.json` caches fetched lead text. If the Wikipedia article is edited between runs, the cached data will be stale. Use `--flushcache` to force a fresh fetch.
 
 ## Related Skills
 

@@ -48,11 +48,15 @@ Currently there is no automated way to:
 | ID | Requirement | Priority | Notes |
 |----|-------------|----------|-------|
 | F-01 | Discover all language editions of a given Wikipedia article via the Action API | P0 | |
-| F-02 | Fetch lead sections (first paragraph / summary) for each language edition via the REST API | P0 | Must handle 404 (article missing), network errors, and redirects |
+| F-02 | Fetch lead sections (first paragraph / summary) for each language edition via the REST API | P0 | Must handle 404, 429 with backoff, 414, network errors, and redirects |
 | F-03 | Accept a user-provided ideal sentence in English | P0 | |
 | F-04 | Score each language's lead against the ideal using multilingual sentence embeddings | P0 | |
-| F-05 | Support concurrent HTTP requests for fetching leads | P1 | 12 concurrent workers |
+| F-05 | Support concurrent HTTP requests for fetching leads | P1 | Configurable via `--workers` (default 6) |
 | F-06 | Output structured JSON with per-language scores, including sub-scores | P0 | |
+| F-07 | Disk cache for fetched leads to avoid re-fetching on re-runs | P1 | `.lead_cache.json`, ~100 KB for 300 languages |
+| F-08 | `--flushcache` flag to clear all caches for a fresh run | P2 | |
+| F-09 | `--model` flag to switch between LaBSE (default) and distilUSE | P1 | |
+| F-10 | `--translate` flag to enable Google Translate (off by default) | P1 | Saves ~30s on each run |
 
 ### 4.2. Scoring System
 
@@ -64,7 +68,7 @@ Currently there is no automated way to:
 | S-04 | Report both sub-scores alongside the combined score | P1 | |
 | S-05 | Report which sentence in the lead produced the best match | P2 | |
 | S-06 | Report the total number of sentences in each lead | P2 | |
-| S-07 | Translate each lead's best-matching sentence to English | P1 | Using Google Translate (free, no API key). Cache results to avoid re-translation |
+| S-07 | Translate each lead's best-matching sentence to English | P1 | Using Google Translate, opt-in via `--translate`. Cache results to disk |
 
 ### 4.3. Reporting
 
@@ -143,14 +147,21 @@ Currently there is no automated way to:
 │                                                           │
 │  ┌────────────┐  ┌────────────┐  ┌────────────────────┐ │
 │  │ Discovery  │─▶│ Fetch      │─▶│ Scoring Engine     │ │
-│  │ (Action    │  │ (REST API  │  │ (sentence-         │ │
-│  │  API)      │  │  x12 Par.) │  │  transformers)     │ │
-│  └────────────┘  └────────────┘  └────────┬───────────┘ │
-│                                           ▼             │
+│  │ (Action    │  │ (REST API  │  │ (LaBSE or          │ │
+│  │  API)      │  │  x6-12 Par.│  │  distilUSE via     │ │
+│  │            │  │  + disk    │  │  --model flag)     │ │
+│  │            │  │  cache)    │  └────────┬───────────┘ │
+│  └────────────┘  └────────────┘           ▼             │
 │                                 ┌────────────────────┐  │
-│                                 │ Report Generator   │  │
-│                                 │ (Markdown + JSON)  │  │
-│                                 └────────────────────┘  │
+│                                 │ Translate (opt-in) │──│──┐
+│                                 │ Google Translate   │  │  │
+│                                 │ --translate flag   │  │  │
+│                                 └────────┬───────────┘  │  │
+│                                          ▼              ▼  │
+│                                 ┌────────────────────┐    │
+│                                 │ Report Generator   │    │
+│                                 │ (Markdown + JSON)  │    │
+│                                 └────────────────────┘    │
 └──────────────────────────────────────────────────────────┘
 ```
 

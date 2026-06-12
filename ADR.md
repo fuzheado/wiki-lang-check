@@ -317,6 +317,21 @@ Use **Option 1**: Google Translate via the `deep-translator` Python library.
 - Machine translation quality varies; low-resource languages may produce garbled output
 - Depends on an external service (Google Translate web interface)
 
+### Status Update (2026-06-12)
+
+After initial use, translations were **made opt-in via `--translate` flag** rather than running on every invocation. The ~30s latency for 90+ Google Translate API calls added noticeable overhead to every run, and most users only need translations occasionally. The disk cache still prevents re-translation when `--translate` is passed on subsequent runs.
+
+### Consequences of the change
+
+**Positive:**
+- Default runs are ~30s faster
+- Users who need translations can still get them with a single flag
+- Translation cache still works when enabled
+
+**Negative:**
+- Users who forget `--translate` get a report without translations
+- The report footer now has conditional content depending on whether translations were requested
+
 ---
 
 ## ADR-009: Model Registry Pattern (LaBSE as Default, --model Flag)
