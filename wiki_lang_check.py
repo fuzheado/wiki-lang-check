@@ -73,6 +73,10 @@ def set_model(choice):
 _translation_cache = {}
 TRANSLATION_CACHE_FILE = os.path.join(SCRIPT_DIR, '.translation_cache.json')
 
+# Lead cache: {lang:title: lead_text} — avoids re-fetching on re-runs
+_lead_cache = {}
+LEAD_CACHE_FILE = os.path.join(SCRIPT_DIR, '.lead_cache.json')
+
 
 def _load_translation_cache():
     """Load translation cache from disk (if exists)."""
@@ -86,12 +90,43 @@ def _load_translation_cache():
 
 
 def _save_translation_cache():
-    """Persist translation cache to disk (append-only, best-effort)."""
+    """Persist translation cache to disk (best-effort)."""
     try:
         with open(TRANSLATION_CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(_translation_cache, f, ensure_ascii=False)
     except OSError:
         pass
+
+
+def _load_lead_cache():
+    """Load lead fetch cache from disk (if exists)."""
+    global _lead_cache
+    if os.path.exists(LEAD_CACHE_FILE):
+        try:
+            with open(LEAD_CACHE_FILE, 'r', encoding='utf-8') as f:
+                _lead_cache = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            _lead_cache = {}
+
+
+def _save_lead_cache():
+    """Persist lead fetch cache to disk (best-effort)."""
+    try:
+        with open(LEAD_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_lead_cache, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _flush_caches():
+    """Delete all cache files for a fresh run."""
+    for path in (TRANSLATION_CACHE_FILE, LEAD_CACHE_FILE):
+        if os.path.exists(path):
+            os.remove(path)
+            print(f'  🗑️  Removed {os.path.basename(path)}', file=sys.stderr)
+    global _translation_cache, _lead_cache
+    _translation_cache = {}
+    _lead_cache = {}
 
 # ─────────────────────────────────────────────────────────────────────
 # Helpers
@@ -296,9 +331,15 @@ def discover_languages(article_title):
 
 def fetch_lead(lang, title):
     """Fetch lead section via REST API /page/summary.
-    Retries on 429 (rate limit) with exponential backoff + Retry-After.
+    Checks lead cache first. Retries on 429 with exponential backoff + Retry-After.
     """
     import time
+    # Check cache first
+    cache_key = f'{lang}:{title}'
+    if cache_key in _lead_cache:
+        val = _lead_cache[cache_key]
+        return val if val else None
+
     encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
     url = f'https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}'
 
@@ -307,25 +348,25 @@ def fetch_lead(lang, title):
             resp = requests.get(url, headers=HEADERS, timeout=15)
             if resp.status_code == 200:
                 extract = resp.json().get('extract', '')
-                if extract and extract.strip():
-                    return extract
-                return None  # empty content
+                result = extract if (extract and extract.strip()) else None
+                _lead_cache[cache_key] = result if result else ''
+                return result
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get('Retry-After', 2))
-                wait = retry_after + (2 ** attempt)  # exponential backoff
+                wait = retry_after + (2 ** attempt)
                 time.sleep(wait)
                 continue
             if resp.status_code == 414:
-                # URI too long — try with fewer safe chars
                 encoded = urllib.parse.quote(title.replace(' ', '_'), safe='')
                 url = f'https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}'
                 resp = requests.get(url, headers=HEADERS, timeout=15)
                 if resp.status_code == 200:
                     extract = resp.json().get('extract', '')
-                    if extract and extract.strip():
-                        return extract
+                    result = extract if (extract and extract.strip()) else None
+                    _lead_cache[cache_key] = result if result else ''
+                    return result
                 return None
-            return None  # other non-200 (e.g. 404)
+            return None
         except requests.Timeout:
             time.sleep(2 ** attempt)
             continue
@@ -608,13 +649,15 @@ def generate_report(scored, all_results, total, successful, ideal_sentence, outp
 # Main pipeline
 # ─────────────────────────────────────────────────────────────────────
 
-def run_pipeline(article_title, ideal_sentence, run_number):
+def run_pipeline(article_title, ideal_sentence, run_number, num_workers=8):
     """Execute the full discover → fetch → score → report pipeline."""
     import concurrent.futures
+    _load_lead_cache()
     tag = safe_filename(article_title)
     print(f'\n🔍 Article: {article_title}', file=sys.stderr)
     print(f'📝 Ideal:   {ideal_sentence[:80]}{"..." if len(ideal_sentence) > 80 else ""}', file=sys.stderr)
     print(f'🔢 Run #{run_number}', file=sys.stderr)
+    print(f'⚙️  Workers: {num_workers}', file=sys.stderr)
 
     # ── 1. Discover ──
     print('\n🌐 Discovering language editions...', file=sys.stderr)
@@ -622,11 +665,12 @@ def run_pipeline(article_title, ideal_sentence, run_number):
     print(f'   Found {len(languages)} language editions (including English)', file=sys.stderr)
 
     # ── 2. Fetch ──
-    print('⬇️  Fetching leads (8 concurrent workers)...', file=sys.stderr)
+    print(f'⬇️  Fetching leads ({num_workers} concurrent workers)...', file=sys.stderr)
+    print(f'   (lead cache: {len(_lead_cache)} entries)', file=sys.stderr)
     all_results = []
     total_langs = len(languages)
     completed = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
         future_map = {
             executor.submit(fetch_lead, item['lang'], item['title']): item
             for item in languages
@@ -645,6 +689,7 @@ def run_pipeline(article_title, ideal_sentence, run_number):
                 ok = sum(1 for r in all_results if r.get('lead'))
                 print(f'   Progress: {completed}/{total_langs} ({ok} found, {completed-ok} missing)', file=sys.stderr)
 
+    _save_lead_cache()
     successful = sum(1 for r in all_results if r.get('lead'))
     missing = total_langs - successful
 
@@ -713,8 +758,11 @@ def show_usage():
       --sentence TEXT   The ideal lead sentence to compare against
 
     OPTIONS
-      --model   TEXT   Embedding model: 'labse' (default, 109 langs) or 'distiluse' (50 langs)
-      --help           Show this message and exit
+      --model     TEXT   Embedding model: 'labse' (default, 109 langs) or 'distiluse' (50 langs)
+      --workers   NUM    Concurrent fetch workers (default: 6). Increase with care —
+                         too many workers may trigger rate limits (HTTP 429).
+      --flushcache       Delete all caches and run fresh (for testing)
+      --help             Show this message and exit
 
     EXAMPLE
       python3 wiki_lang_check.py --article "Wikimania" --sentence "Wikimania is the \\
@@ -730,6 +778,12 @@ def show_usage():
       distiluse          distiluse-base-multilingual-cased-v2 — 50+ languages,
                         faster and smaller (~500 MB), but weaker coverage for
                         South Asian scripts (Kannada, Telugu, Tamil, etc.)
+
+    CACHING
+      Lead text and translations are cached on disk (.lead_cache.json and
+      .translation_cache.json) so re-runs on the same article skip HTTP
+      requests and translation calls entirely. Use --flushcache to start
+      fresh (useful for testing or after article edits).
 
     NOTES
       • On first run, model weights are downloaded (size depends on model).
@@ -761,6 +815,10 @@ def main():
     parser.add_argument('--model', type=str, default='labse',
                         choices=['labse', 'distiluse'],
                         help='Embedding model: labse (default, 109 langs) or distiluse (50 langs, faster)')
+    parser.add_argument('--workers', type=int, default=6,
+                        help='Concurrent fetch workers (default: 6). Higher values may trigger 429 rate limits.')
+    parser.add_argument('--flushcache', action='store_true',
+                        help='Delete all caches and run fresh')
     parser.add_argument('command', nargs='?', default=None,
                         help='Subcommand: "example"')
 
@@ -787,13 +845,23 @@ def main():
         print('Run "python3 wiki_lang_check.py --help" for details.', file=sys.stderr)
         sys.exit(1)
 
+    # Flush caches if requested
+    if args.flushcache:
+        print('🧹 Flushing caches...', file=sys.stderr)
+        _flush_caches()
+
     # Set the chosen model
     model_cfg = set_model(args.model)
     print(f'🧠 Model: {model_cfg["short"]} ({model_cfg["languages"]} languages, {model_cfg["size_hint"]})', file=sys.stderr)
+
+    # Warn about high worker count
+    if args.workers > 8:
+        print(f'⚠️  Warning: {args.workers} workers is high — you may hit Wikimedia rate limits (HTTP 429).', file=sys.stderr)
+        print(f'   Reduce with --workers 6 or --workers 4 if you see many missing languages.', file=sys.stderr)
     print(file=sys.stderr)
 
     run_number = get_run_number()
-    run_pipeline(article, sentence, run_number)
+    run_pipeline(article, sentence, run_number, num_workers=args.workers)
 
 
 if __name__ == '__main__':

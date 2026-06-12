@@ -42,10 +42,27 @@ cd /Users/alih/Documents/ai/lang-check
 # Create virtual environment and install dependencies
 python3 -m venv venv
 source venv/bin/activate
-pip install sentence-transformers requests numpy
+pip install -r requirements.txt
 ```
 
-> **Note:** `sentence-transformers` pulls in PyTorch (~800MB on first install). The model weights (`distiluse-base-multilingual-cased-v2`) download on first run (~500MB).
+> **Note:** The dependencies include PyTorch (~800 MB) and the embedding model weights (~1.8 GB for LaBSE, ~500 MB for distilUSE). Both are cached after first download.
+
+## Caching
+
+Lang-Check uses **two disk caches** to avoid redundant work on re-runs:
+
+| Cache | File | What it stores | Size (typical) |
+|-------|------|----------------|----------------|
+| **Lead cache** | `.lead_cache.json` | Fetched lead text per `lang:title` | ~100 KB for 300 languages |
+| **Translation cache** | `.translation_cache.json` | Google Translate results per snippet | ~30 KB for 90 translations |
+
+Both caches are **gitignored** and persist between sessions. Re-running the same article is near-instant for fetching and translation.
+
+To force a fresh fetch and re-translate (e.g., after the article has been edited):
+
+```bash
+python3 wiki_lang_check.py --flushcache --article "Article" --sentence "Ideal sentence."
+```
 
 ## Usage
 
@@ -73,6 +90,8 @@ The `example` mode is a quick way to see how the tool works without specifying a
 | `--article TEXT` | Yes (or `example`) | Wikipedia article title (e.g., `"Wikimania"`) |
 | `--sentence TEXT` | Yes (or `example`) | Ideal lead sentence to compare against |
 | `--model TEXT` | No | Embedding model: `labse` (default, 109 langs) or `distiluse` (50 langs, faster) |
+| `--workers NUM` | No | Concurrent fetch workers (default: 6). Higher values risk 429 rate limits. |
+| `--flushcache` | No | Delete all caches and run fresh (for testing) |
 | `--help` | No | Show detailed usage message |
 | `example` | No (subcommand) | Run the built-in Wikimania example |
 
@@ -96,20 +115,22 @@ The run counter persists in `.run_counter` and auto-increments each invocation.
 
 ```
 lang-check/
-├── wiki_lang_check.py          # Main CLI: discover → fetch → score → report
-├── score_and_report.py         # Standalone scorer (expects batch_results_*.json)
-├── CHANGELOG.md                # Feature progress & planned work
-├── PRD.md                      # Product requirements
-├── ADR.md                      # Architecture Decision Record
-├── README.md                   # This file
-├── .run_counter                # Persistent run sequence number
-├── venv/                       # Python virtual environment
-├── all_langs.json              # Language list cache
-├── examples/                   # Example output files
+├── wiki_lang_check.py              # Main CLI: discover → fetch → score → report
+├── CHANGELOG.md                    # Feature progress & planned work
+├── PRD.md                          # Product requirements
+├── ADR.md                          # Architecture Decision Record
+├── README.md                       # This file
+├── requirements.txt                # Python dependencies
+├── .gitignore
+├── .run_counter                    # Persistent run sequence number
+├── .lead_cache.json                # Disk cache for fetched leads (gitignored)
+├── .translation_cache.json         # Disk cache for translations (gitignored)
+├── venv/                           # Python virtual environment
+├── examples/                       # Example output files
 │   ├── Wikimania_example_report.md
 │   └── Wikimania_example_results.json
-├── Wikimania_run*              # Actual run output (numbered)
-└── *.py                        # Other helper scripts
+└── Wikimania_run*                  # Actual run output (numbered)
+```
 ```
 
 ## Scoring Methodology

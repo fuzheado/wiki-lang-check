@@ -22,6 +22,9 @@ Tracking implemented features, in-progress work, and planned enhancements.
 | **Lazy imports for fast startup** | **2.0** | Heavy libraries (torch, sentence-transformers, numpy) now imported on-demand only. No-args / `--help` startup dropped from ~5s to ~0.13s |
 | **LaBSE as default model** | **2.0** | Default model changed to LaBSE (109 languages, excellent South Asian coverage). Old distilUSE available via `--model distiluse`. South Asian language scores improved from ~-0.02 to ~0.70-0.83 |
 | **Rate-limit handling in fetch** | **2.0** | `fetch_lead()` now retries on 429 with exponential backoff + Retry-After. Also handles 414 (URI too long). Concurrency reduced from 12 to 8 workers. Sun article went from 103/312 → 296/312 found. |
+| **Lead fetch disk cache** | **2.0** | `.lead_cache.json` stores fetched lead text per `lang:title`. Re-runs skip HTTP entirely. ~100 KB for 300 languages. |
+| **`--flushcache` flag** | **2.0** | Deletes both `.lead_cache.json` and `.translation_cache.json` for a fresh run. |
+| **`--workers` flag** | **2.0** | Configurable concurrency (default: 6). Warning at >8 workers about 429 risk. |
 
 ---
 
